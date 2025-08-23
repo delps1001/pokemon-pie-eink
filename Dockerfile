@@ -57,6 +57,13 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Install Waveshare e-Paper library in production stage
+RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
+    cd e-Paper/RaspberryPi_JetsonNano/python && \
+    python3 setup.py install && \
+    cd ../../.. && \
+    rm -rf e-Paper
+
 # Create app user for security
 RUN useradd --create-home --shell /bin/bash pokemon
 USER pokemon

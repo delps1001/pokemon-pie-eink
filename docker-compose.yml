@@ -5,6 +5,9 @@ services:
     container_name: pokemon-calendar
     restart: unless-stopped
     
+    # Memory limits for Pi Zero W 2 (512MB total RAM)
+    mem_limit: 256m
+    
     # Pi-specific configurations
     privileged: true  # Required for GPIO/SPI access
     devices:
@@ -39,6 +42,9 @@ services:
     image: containrrr/watchtower:arm64v8-latest  # ARM64 for Pi Zero W 2
     container_name: watchtower
     restart: unless-stopped
+    
+    # Memory limits
+    mem_limit: 64m
 
     # Docker socket access for container management
     volumes:
@@ -50,8 +56,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=3600     # Check every hour
       - WATCHTOWER_INCLUDE_STOPPED=true   # Update stopped containers
       - WATCHTOWER_REVIVE_STOPPED=false   # Don't restart stopped containers
-      - WATCHTOWER_NOTIFICATIONS=webhook  # Webhook notifications
-      - WATCHTOWER_NOTIFICATION_WEBHOOK_URL=http://pokemon-calendar:8000/api/webhook/update
+      - WATCHTOWER_NO_STARTUP_MESSAGE=true
 
     # Only monitor specific containers
     command: pokemon-calendar
@@ -59,21 +64,25 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Don't update watchtower itself
 
-  # Optional: Portainer for remote container management
-  portainer:
-    image: portainer/portainer-ce:alpine
-    container_name: portainer
-    restart: unless-stopped
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-
-    ports:
-      - "9000:9000"  # Portainer web interface
-
-    labels:
-      - "com.centurylinklabs.watchtower.enable=false"
+#  # Optional: Portainer for remote container management
+#  portainer:
+#    image: portainer/portainer-ce:alpine
+#    container_name: portainer
+#    restart: unless-stopped
+#
+#    # Memory limits
+#    mem_limit: 128m
+#    mem_reservation: 64m
+#
+#    volumes:
+#      - /var/run/docker.sock:/var/run/docker.sock
+#      - portainer_data:/data
+#
+#    ports:
+#      - "9000:9000"  # Portainer web interface
+#
+#    labels:
+#      - "com.centurylinklabs.watchtower.enable=false"
 
 volumes:
   pokemon_cache:
