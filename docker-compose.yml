@@ -1,12 +1,7 @@
 # Docker Compose for Raspberry Pi Zero W 2 Remote Deployment
-version: '3.8'
-
 services:
   pokemon-calendar:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-    image: pokemon_eink:latest
+    image: delps1001/pokemon-eink-calendar:latest
     container_name: pokemon-calendar
     restart: unless-stopped
     
@@ -22,78 +17,63 @@ services:
       - POKEMON_WEB_PORT=8000
       - POKEMON_CONFIG_FILE=/app/config.json
       - POKEMON_DEMO_MODE=false
-      - TZ=America/New_York  # Adjust for nephew's timezone
+      - TZ=America/New_York
     
     # Persistent storage for cache and config
     volumes:
-      - pokemon_cache:/home/pokemon/app/pokemon_cache
-      - pokemon_config:/home/pokemon/app/config
-      - ./config.json:/home/pokemon/app/config.json:ro
+      - pokemon_cache:/home/pi/pokemon-calendar/pokemon_cache
+      - pokemon_config:/home/pi/pokemon-calendar/config
+      - ./config.json:/home/pi/pokemon-calendar/config.json
     
     # Network access
     ports:
       - "8000:8000"  # Web interface
-    
-    # Health monitoring
-    healthcheck:
-      test: ["CMD", "python3", "/tmp/health_check.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    
-    # Logging for remote debugging
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
     
     # Labels for Watchtower auto-updates
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.monitor-only=false"
 
-#  # Watchtower for automatic updates
-#  watchtower:
-#    image: containrrr/watchtower:arm64v8-latest  # ARM64 for Pi Zero W 2
-#    container_name: watchtower
-#    restart: unless-stopped
-#
-#    # Docker socket access for container management
-#    volumes:
-#      - /var/run/docker.sock:/var/run/docker.sock
-#
-#    # Update configuration
-#    environment:
-#      - WATCHTOWER_CLEANUP=true           # Remove old images
-#      - WATCHTOWER_POLL_INTERVAL=3600     # Check every hour
-#      - WATCHTOWER_INCLUDE_STOPPED=true   # Update stopped containers
-#      - WATCHTOWER_REVIVE_STOPPED=false   # Don't restart stopped containers
-#      - WATCHTOWER_NOTIFICATIONS=webhook  # Webhook notifications
-#      - WATCHTOWER_NOTIFICATION_WEBHOOK_URL=http://pokemon-calendar:8000/api/webhook/update
-#
-#    # Only monitor specific containers
-#    command: pokemon-calendar
-#
-#    labels:
-#      - "com.centurylinklabs.watchtower.enable=false"  # Don't update watchtower itself
-#
-#  # Optional: Portainer for remote container management
-#  portainer:
-#    image: portainer/portainer-ce:alpine-linux-arm64
-#    container_name: portainer
-#    restart: unless-stopped
-#
-#    volumes:
-#      - /var/run/docker.sock:/var/run/docker.sock
-#      - portainer_data:/data
-#
-#    ports:
-#      - "9000:9000"  # Portainer web interface
-#
-#    labels:
-#      - "com.centurylinklabs.watchtower.enable=false"
+  # Watchtower for automatic updates
+  watchtower:
+    image: containrrr/watchtower:arm64v8-latest  # ARM64 for Pi Zero W 2
+    container_name: watchtower
+    restart: unless-stopped
+
+    # Docker socket access for container management
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Update configuration
+    environment:
+      - WATCHTOWER_CLEANUP=true           # Remove old images
+      - WATCHTOWER_POLL_INTERVAL=3600     # Check every hour
+      - WATCHTOWER_INCLUDE_STOPPED=true   # Update stopped containers
+      - WATCHTOWER_REVIVE_STOPPED=false   # Don't restart stopped containers
+      - WATCHTOWER_NOTIFICATIONS=webhook  # Webhook notifications
+      - WATCHTOWER_NOTIFICATION_WEBHOOK_URL=http://pokemon-calendar:8000/api/webhook/update
+
+    # Only monitor specific containers
+    command: pokemon-calendar
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Don't update watchtower itself
+
+  # Optional: Portainer for remote container management
+  portainer:
+    image: portainer/portainer-ce:alpine
+    container_name: portainer
+    restart: unless-stopped
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+    ports:
+      - "9000:9000"  # Portainer web interface
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
 
 volumes:
   pokemon_cache:

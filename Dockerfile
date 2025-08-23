@@ -24,6 +24,13 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Waveshare e-Paper library from GitHub
+RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
+    cd e-Paper/RaspberryPi_JetsonNano/python && \
+    python3 setup.py install && \
+    cd ../../.. && \
+    rm -rf e-Paper
+
 # Copy source files needed for Cython build
 COPY fast_dither.pyx .
 
