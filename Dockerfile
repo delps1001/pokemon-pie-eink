@@ -1,5 +1,5 @@
 # Single-stage Dockerfile for Pi Zero 2 (Bookworm)
-FROM --platform=linux/arm/v7 python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 # Build + runtime deps (Pillow, SPI, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
