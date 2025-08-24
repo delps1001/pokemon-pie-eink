@@ -4,12 +4,15 @@ services:
     image: delps1001/pokemon-eink-calendar:latest
     container_name: pokemon-calendar
     restart: unless-stopped
+    user: "0:0"  # Run as root for GPIO access
     
     # Pi-specific configurations
     privileged: true  # Required for GPIO/SPI access
     devices:
       - "/dev/spidev0.0:/dev/spidev0.0"  # SPI for e-ink display
       - "/dev/gpiomem:/dev/gpiomem"      # GPIO access
+      - "/dev/gpiochip0:/dev/gpiochip0"  # GPIO chip access
+      - "/dev/mem:/dev/mem"              # Memory access for GPIO
     
     # Environment variables for remote deployment
     environment:
