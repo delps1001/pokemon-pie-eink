@@ -1,30 +1,37 @@
 # Single-stage Dockerfile optimized for Raspberry Pi Zero W 2
 FROM python:3.11-slim-bookworm
 
-# Install all dependencies (build + runtime)
+# Install build dependencies and runtime libraries
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     python3-dev \
+    cython3 \
+    git \
     libfreetype6-dev \
     libjpeg-dev \
     libopenjp2-7-dev \
     libtiff5-dev \
     libwebp-dev \
     libffi-dev \
-    cython3 \
-    git \
     libfreetype6 \
     libjpeg62-turbo \
     libopenjp2-7 \
     libtiff6 \
     libwebp7 \
+    python3-spidev \
+    python3-rpi.gpio \
     fonts-dejavu-core \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies globally
-COPY requirements.txt .
+# Set working directory early
+WORKDIR /app
+
+# Copy source files needed for Cython build first
+COPY fast_dither.pyx requirements.txt ./
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Waveshare e-Paper library from GitHub
@@ -34,21 +41,12 @@ RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
     cd ../../.. && \
     rm -rf e-Paper
 
-# Copy source files needed for Cython build
-COPY fast_dither.pyx .
-
 # Build Cython fast dithering module
 RUN pip install Cython && \
     python3 -c "from distutils.core import setup; from Cython.Build import cythonize; import numpy; setup(ext_modules=cythonize('fast_dither.pyx'), include_dirs=[numpy.get_include()])" build_ext --inplace
 
-# Run as root for relaxed permissions during troubleshooting
-WORKDIR /app
-
-# Copy application files
+# Copy remaining application files
 COPY . .
-
-# Copy built Cython module (already built above)
-# (Cython module is built in place above)
 
 # Create cache directory
 RUN mkdir -p pokemon_cache earliest_pokemon_sprites
