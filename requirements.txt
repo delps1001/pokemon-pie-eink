@@ -10,3 +10,5 @@ zeroconf>=0.71.0
 spidev
 gpiozero
 RPi.GPIO
+lgpio
+pigpio

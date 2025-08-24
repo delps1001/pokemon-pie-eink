@@ -57,8 +57,10 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create app user for security
-RUN useradd --create-home --shell /bin/bash pokemon
+# Create app user for security and add to gpio group
+RUN useradd --create-home --shell /bin/bash pokemon && \
+    groupadd -f gpio && \
+    usermod -a -G gpio pokemon
 USER pokemon
 WORKDIR /home/pokemon/app
 
