@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+import traceback
 
 try:
     from zeroconf import ServiceInfo, Zeroconf
@@ -116,7 +117,7 @@ class PokemonWebServer:
         # mDNS service broadcasting
         self.zeroconf = None
         self.service_info = None
-        
+
         self._setup_app()
         self._setup_routes()
 
@@ -138,9 +139,16 @@ class PokemonWebServer:
         
         try:
             local_ip = self._get_local_ip()
+            logging.info(f"mDNS using local IP {local_ip} for registration")
             
-            # Create service info - use shorter service type
-            service_name = "pokecal._pokecal._tcp.local."
+            # Create unique service names to avoid conflicts
+            import time
+            import random
+            timestamp = int(time.time())
+            random_suffix = random.randint(1000, 9999)
+            unique_id = f"{timestamp}-{random_suffix}"
+            
+            service_name = f"pokecal-{unique_id}._pokecal._tcp.local."
             service_type = "_pokecal._tcp.local."
             
             # Get current Pokemon info for service properties
@@ -148,7 +156,8 @@ class PokemonWebServer:
                 'version': '1.0.0',
                 'api_version': '1',
                 'service': 'pokecal',
-                'path': '/api/status'
+                'path': '/api/status',
+                'instance_id': unique_id
             }
             
             # Add current Pokemon info if available
@@ -189,12 +198,37 @@ class PokemonWebServer:
             )
             
             self.zeroconf = Zeroconf()
-            self.zeroconf.register_service(self.service_info)
             
-            logging.info(f"mDNS service registered: {service_name} on {local_ip}:{self.port}")
+            # Register service with retry logic for conflicts
+            try:
+                self.zeroconf.register_service(self.service_info)
+                logging.info(f"mDNS service registered: {service_name} on {local_ip}:{self.port}")
+            except Exception as reg_error:
+                if "NonUniqueNameException" in str(reg_error):
+                    logging.warning(f"mDNS service name conflict for {service_name}, trying alternative name")
+                    # Try with additional random suffix
+                    alt_suffix = random.randint(10000, 99999)
+                    alt_service_name = f"pokecal-{unique_id}-{alt_suffix}._pokecal._tcp.local."
+                    self.service_info = ServiceInfo(
+                        service_type,
+                        alt_service_name,
+                        addresses=[socket.inet_aton(local_ip)],
+                        port=self.port,
+                        properties=properties_bytes,
+                        server=f"pokecal-{local_ip.replace('.', '-')}.local."
+                    )
+                    try:
+                        self.zeroconf.register_service(self.service_info)
+                        logging.info(f"mDNS service registered with alternative name: {alt_service_name} on {local_ip}:{self.port}")
+                    except Exception as alt_error:
+                        logging.warning(f"Failed to register alternative mDNS service: {alt_error}")
+                        raise alt_error
+                else:
+                    raise reg_error
             
         except Exception as e:
             logging.error(f"Failed to set up mDNS service: {e}")
+            traceback.print_exc()
             self.zeroconf = None
             self.service_info = None
 

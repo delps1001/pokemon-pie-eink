@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 libjpeg62-turbo libopenjp2-7 libtiff6 libwebp7 \
     # SPI & misc
     python3-spidev fonts-dejavu-core curl git \
+    # mDNS support
+    avahi-daemon avahi-utils \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
