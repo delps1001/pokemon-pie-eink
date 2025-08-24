@@ -10,6 +10,7 @@ services:
       - "/dev/spidev0.0:/dev/spidev0.0"
     # Host networking = container can reach pigpio on 127.0.0.1:8888
     network_mode: host
+    command: ["python3", "pokemon_eink_calendar.py", "--web-server", "--config", "./config/config.json"]
 
     environment:
       - TZ=America/New_York
@@ -18,15 +19,10 @@ services:
       - POKEMON_DEMO_MODE=false
       # Force gpiozero to use pigpio backend
       - GPIOZERO_PIN_FACTORY=pigpio
-      - PIGPIO_ADDR=127.0.0.1
-      - PIGPIO_PORT=8888
-      # Use the correct Waveshare 7-color “F” driver for your panel:
-      - EPD_MODULE=epd7in5f   # or epd5in65f / epd4in01f depending on your exact display
 
     volumes:
       - pokemon_cache:/app/pokemon_cache
-      - pokemon_config:/app/config
-      - ./config.json:/app/config.json:ro
+      - ./config:/app/config
 
     # With host networking, you don't need ports: section
     stop_grace_period: 30s
@@ -39,7 +35,6 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   watchtower:
-    platform: linux/arm/v7
     image: containrrr/watchtower:latest   # multi-arch; safe for 32-bit
     container_name: watchtower
     restart: unless-stopped
@@ -57,4 +52,3 @@ services:
 
 volumes:
   pokemon_cache:
-  pokemon_config:

@@ -43,6 +43,33 @@ install_docker() {
     echo "✅ Docker installed successfully"
 }
 
+# Install and enable pigpio daemon (pigpiod)
+install_pigpio() {
+    echo "🐷 Installing pigpio daemon..."
+    sudo apt update
+    sudo apt install -y pigpio
+
+    echo "🔌 Enabling and starting pigpiod service..."
+    sudo systemctl enable pigpiod.service
+    sudo systemctl restart pigpiod.service
+
+    sudo mkdir -p /etc/systemd/system/pigpiod.service.d
+    printf "[Service]\nExecStart=\nExecStart=/usr/bin/pigpiod -g -l -p 8888 -f\nType=simple\n" | \
+      sudo tee /etc/systemd/system/pigpiod.service.d/override.conf
+
+    sudo systemctl daemon-reload
+    sudo systemctl restart pigpiod
+
+    # Basic check that it's listening on 127.0.0.1:8888
+    sleep 1
+    if ss -ltn 2>/dev/null | grep -q ":8888"; then
+        echo "✅ pigpio daemon is listening on port 8888"
+    else
+        echo "⚠️  Warning: pigpio daemon may not be listening on port 8888"
+        echo "    You can check with: sudo systemctl status pigpiod && ss -ltn | grep 8888"
+    fi
+}
+
 # Function to enable SPI for e-ink display
 enable_spi() {
     echo "⚡ Enabling SPI interface..."
@@ -52,9 +79,10 @@ enable_spi() {
 
 setup_application() {
     echo "📂 Setting up application..."
+    mkdir config
 
     # Create configuration for nephew's location
-    cat > config.json << 'EOF'
+    cat > config/config.json << 'EOF'
 {
     "display": {
         "type": "7in5_HD",
@@ -129,6 +157,9 @@ main() {
         echo "⚠️  Docker was just installed. Please log out and back in, then run this script again."
         exit 0
     fi
+
+    # Install and enable pigpio daemon on the host
+    install_pigpio
 
     # Pi-specific setup
     enable_spi
