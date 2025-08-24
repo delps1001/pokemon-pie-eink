@@ -40,8 +40,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/tmp/pokemon_calendar.log'),
-        logging.StreamHandler()
+        logging.StreamHandler()  # Only console output for Docker
     ]
 )
 
