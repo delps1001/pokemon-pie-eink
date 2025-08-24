@@ -1,75 +1,41 @@
-# Single-stage Dockerfile optimized for Raspberry Pi Zero W 2
-FROM python:3.11-slim-bookworm
+# Single-stage Dockerfile for Pi Zero 2 (Bookworm)
+FROM --platform=linux/arm/v7 python:3.11-slim-bookworm
 
-# Install build dependencies and runtime libraries
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-dev \
-    cython3 \
-    git \
-    libfreetype6-dev \
-    libjpeg-dev \
-    libopenjp2-7-dev \
-    libtiff5-dev \
-    libwebp-dev \
-    libffi-dev \
-    libfreetype6 \
-    libjpeg62-turbo \
-    libopenjp2-7 \
-    libtiff6 \
-    libwebp7 \
+# Build + runtime deps (Pillow, SPI, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ python3-dev \
+    libfreetype6-dev libjpeg-dev libopenjp2-7-dev libtiff6-dev libwebp-dev libffi-dev \
+    libfreetype6 libjpeg62-turbo libopenjp2-7 libtiff6 libwebp7 \
     python3-spidev \
-    fonts-dejavu-core \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    fonts-dejavu-core curl git \
+ && rm -rf /var/lib/apt/lists/*
 
-# Set working directory early
 WORKDIR /app
 
-# Copy source files needed for Cython build first
-COPY fast_dither.pyx requirements.txt ./
+# Install Python deps first for layer caching
+COPY requirements.txt fast_dither.pyx ./
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && pip install --no-cache-dir -r requirements.txt \
+    pigpio gpiozero spidev \
+ && pip install --no-cache-dir Cython numpy \
+ && python3 -c "from setuptools import setup; from Cython.Build import cythonize; import numpy; setup(ext_modules=cythonize('fast_dither.pyx'), include_dirs=[numpy.get_include()])" build_ext --inplace
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Waveshare e-Paper lib (pin master; adjust if you want a specific commit)
+ARG EPD_REF=master
+RUN pip install --no-cache-dir "git+https://github.com/waveshareteam/e-Paper.git@${EPD_REF}#subdirectory=RaspberryPi_JetsonNano/python"
 
-# Install RPi.GPIO for GPIO access (not available via apt)
-RUN pip install --no-cache-dir RPi.GPIO
-
-# Install Waveshare e-Paper library from GitHub
-RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
-    cd e-Paper/RaspberryPi_JetsonNano/python && \
-    pip install . && \
-    cd ../../.. && \
-    rm -rf e-Paper
-
-# Build Cython fast dithering module
-RUN pip install Cython && \
-    python3 -c "from distutils.core import setup; from Cython.Build import cythonize; import numpy; setup(ext_modules=cythonize('fast_dither.pyx'), include_dirs=[numpy.get_include()])" build_ext --inplace
-
-# Copy remaining application files
+# App files
 COPY . .
 
-# Create cache directory
-RUN mkdir -p pokemon_cache earliest_pokemon_sprites
-
-# Health check
+# Healthcheck (only if your app serves /health)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-# Expose web server port
-EXPOSE 8000
-
-# Default configuration for remote deployment
-ENV PYTHONUNBUFFERED=1
-ENV POKEMON_CONFIG_FILE=/app/config.json
-ENV POKEMON_CACHE_DIR=/app/pokemon_cache
-ENV POKEMON_WEB_HOST=0.0.0.0
-ENV POKEMON_WEB_PORT=8000
-
-# Entry point with automatic dependency installation  
-COPY docker-entrypoint.sh /app/
-RUN chmod +x /app/docker-entrypoint.sh
+ENV PYTHONUNBUFFERED=1 \
+    POKEMON_CONFIG_FILE=/app/config.json \
+    POKEMON_CACHE_DIR=/app/pokemon_cache \
+    POKEMON_WEB_HOST=0.0.0.0 \
+    POKEMON_WEB_PORT=8000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python3", "pokemon_eink_calendar.py", "--web-server"]

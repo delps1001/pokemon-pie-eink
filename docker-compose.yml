@@ -1,91 +1,60 @@
-# Docker Compose for Raspberry Pi Zero W 2 Remote Deployment
 services:
   pokemon-calendar:
     image: delps1001/pokemon-eink-calendar:latest
     container_name: pokemon-calendar
     restart: unless-stopped
-    user: "0:0"  # Run as root for GPIO access
-    
-    # Pi-specific configurations
-    privileged: true  # Required for GPIO/SPI access
+    user: "0:0"
+    # No privileged needed
+    # Map SPI for Waveshare driver; GPIO is via pigpio TCP
     devices:
-      - "/dev/spidev0.0:/dev/spidev0.0"  # SPI for e-ink display
-      - "/dev/gpiomem:/dev/gpiomem"      # GPIO access
-      - "/dev/gpiochip0:/dev/gpiochip0"  # GPIO chip access
-      - "/dev/mem:/dev/mem"              # Memory access for GPIO
-    
-    # Environment variables for remote deployment
+      - "/dev/spidev0.0:/dev/spidev0.0"
+    # Host networking = container can reach pigpio on 127.0.0.1:8888
+    network_mode: host
+
     environment:
+      - TZ=America/New_York
       - POKEMON_WEB_HOST=0.0.0.0
       - POKEMON_WEB_PORT=8000
       - POKEMON_DEMO_MODE=false
-      - TZ=America/New_York
-    # Persistent storage for cache and config
+      # Force gpiozero to use pigpio backend
+      - GPIOZERO_PIN_FACTORY=pigpio
+      - PIGPIO_ADDR=127.0.0.1
+      - PIGPIO_PORT=8888
+      # Use the correct Waveshare 7-color “F” driver for your panel:
+      - EPD_MODULE=epd7in5f   # or epd5in65f / epd4in01f depending on your exact display
+
     volumes:
       - pokemon_cache:/app/pokemon_cache
       - pokemon_config:/app/config
-      - ./config.json:/app/config.json
-    
-    # Network access
-    network_mode: host
-    
-    # Labels for Watchtower auto-updates
+      - ./config.json:/app/config.json:ro
+
+    # With host networking, you don't need ports: section
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "com.centurylinklabs.watchtower.monitor-only=false"
 
-  # Watchtower for automatic updates
   watchtower:
-    image: containrrr/watchtower:arm64v8-latest  # ARM64 for Pi Zero W 2
+    platform: linux/arm/v7
+    image: containrrr/watchtower:latest   # multi-arch; safe for 32-bit
     container_name: watchtower
     restart: unless-stopped
-    
-    # Docker socket access for container management
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-
-    # Update configuration
     environment:
-      - WATCHTOWER_CLEANUP=true           # Remove old images
-      - WATCHTOWER_POLL_INTERVAL=3600     # Check every hour
-      - WATCHTOWER_INCLUDE_STOPPED=true   # Update stopped containers
-      - WATCHTOWER_REVIVE_STOPPED=false   # Don't restart stopped containers
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=false
       - WATCHTOWER_NO_STARTUP_MESSAGE=true
-
-    # Only monitor specific containers
     command: pokemon-calendar
-
     labels:
-      - "com.centurylinklabs.watchtower.enable=false"  # Don't update watchtower itself
-
-#  # Optional: Portainer for remote container management
-#  portainer:
-#    image: portainer/portainer-ce:alpine
-#    container_name: portainer
-#    restart: unless-stopped
-#
-#    # Memory limits
-#    mem_limit: 128m
-#    mem_reservation: 64m
-#
-#    volumes:
-#      - /var/run/docker.sock:/var/run/docker.sock
-#      - portainer_data:/data
-#
-#    ports:
-#      - "9000:9000"  # Portainer web interface
-#
-#    labels:
-#      - "com.centurylinklabs.watchtower.enable=false"
+      - "com.centurylinklabs.watchtower.enable=false"
 
 volumes:
   pokemon_cache:
-    driver: local
   pokemon_config:
-    driver: local
-  portainer_data:
-    driver: local
-
-networks:
-  default:
-    driver: bridge
