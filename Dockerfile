@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y \
     libtiff6 \
     libwebp7 \
     python3-spidev \
-    python3-rpi.gpio \
     fonts-dejavu-core \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -33,6 +32,9 @@ COPY fast_dither.pyx requirements.txt ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install RPi.GPIO for GPIO access (not available via apt)
+RUN pip install --no-cache-dir RPi.GPIO
 
 # Install Waveshare e-Paper library from GitHub
 RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \

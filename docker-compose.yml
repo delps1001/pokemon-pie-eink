@@ -27,8 +27,7 @@ services:
       - ./config.json:/app/config.json
     
     # Network access
-    ports:
-      - "8000:8000"  # Web interface
+    network_mode: host
     
     # Labels for Watchtower auto-updates
     labels:
