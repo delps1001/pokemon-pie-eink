@@ -1,7 +1,7 @@
-# Multi-stage Dockerfile optimized for Raspberry Pi Zero W 2
-FROM python:3.11-slim-bullseye AS builder
+# Single-stage Dockerfile optimized for Raspberry Pi Zero W 2
+FROM python:3.11-slim-bookworm
 
-# Install build dependencies
+# Install all dependencies (build + runtime)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -14,17 +14,20 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     cython3 \
     git \
+    libfreetype6 \
+    libjpeg62-turbo \
+    libopenjp2-7 \
+    libtiff6 \
+    libwebp7 \
+    fonts-dejavu-core \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy requirements and install Python dependencies
+# Copy requirements and install Python dependencies globally
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Waveshare e-Paper library from GitHub (into venv)
+# Install Waveshare e-Paper library from GitHub
 RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
     cd e-Paper/RaspberryPi_JetsonNano/python && \
     pip install . && \
@@ -38,37 +41,14 @@ COPY fast_dither.pyx .
 RUN pip install Cython && \
     python3 -c "from distutils.core import setup; from Cython.Build import cythonize; import numpy; setup(ext_modules=cythonize('fast_dither.pyx'), include_dirs=[numpy.get_include()])" build_ext --inplace
 
-# Production stage
-FROM python:3.11-slim-bullseye
-
-# Install runtime dependencies for Pi GPIO and SPI
-RUN apt-get update && apt-get install -y \
-    libfreetype6 \
-    libjpeg62-turbo \
-    libopenjp2-7 \
-    libtiff5 \
-    libwebp6 \
-    fonts-dejavu-core \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Create app user for security and add to gpio group
-RUN useradd --create-home --shell /bin/bash pokemon && \
-    groupadd -f gpio && \
-    usermod -a -G gpio pokemon
-USER pokemon
-WORKDIR /home/pokemon/app
+# Run as root for relaxed permissions during troubleshooting
+WORKDIR /app
 
 # Copy application files
-COPY --chown=pokemon:pokemon . .
+COPY . .
 
-# Copy built Cython module from builder
-COPY --from=builder --chown=pokemon:pokemon fast_dither*.so ./
+# Copy built Cython module (already built above)
+# (Cython module is built in place above)
 
 # Create cache directory
 RUN mkdir -p pokemon_cache earliest_pokemon_sprites
@@ -82,14 +62,14 @@ EXPOSE 8000
 
 # Default configuration for remote deployment
 ENV PYTHONUNBUFFERED=1
-ENV POKEMON_CONFIG_FILE=/home/pokemon/app/config.json
-ENV POKEMON_CACHE_DIR=/home/pokemon/app/pokemon_cache
+ENV POKEMON_CONFIG_FILE=/app/config.json
+ENV POKEMON_CACHE_DIR=/app/pokemon_cache
 ENV POKEMON_WEB_HOST=0.0.0.0
 ENV POKEMON_WEB_PORT=8000
 
-# Entry point with automatic dependency installation
-COPY --chown=pokemon:pokemon docker-entrypoint.sh /home/pokemon/
-RUN chmod +x /home/pokemon/docker-entrypoint.sh
+# Entry point with automatic dependency installation  
+COPY docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh
 
-ENTRYPOINT ["/home/pokemon/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python3", "pokemon_eink_calendar.py", "--web-server"]

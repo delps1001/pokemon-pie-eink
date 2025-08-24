@@ -20,12 +20,11 @@ services:
       - POKEMON_WEB_PORT=8000
       - POKEMON_DEMO_MODE=false
       - TZ=America/New_York
-    
     # Persistent storage for cache and config
     volumes:
-      - pokemon_cache:/home/pokemon/app/pokemon_cache
-      - pokemon_config:/home/pokemon/app/config
-      - ./config.json:/home/pokemon/app/config.json
+      - pokemon_cache:/app/pokemon_cache
+      - pokemon_config:/app/config
+      - ./config.json:/app/config.json
     
     # Network access
     ports:
