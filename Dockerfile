@@ -24,10 +24,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Waveshare e-Paper library from GitHub
+# Install Waveshare e-Paper library from GitHub (into venv)
 RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
     cd e-Paper/RaspberryPi_JetsonNano/python && \
-    python3 setup.py install && \
+    pip install . && \
     cd ../../.. && \
     rm -rf e-Paper
 
@@ -56,13 +56,6 @@ RUN apt-get update && apt-get install -y \
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-
-# Install Waveshare e-Paper library in production stage (into venv)
-RUN git clone --depth 1 https://github.com/waveshareteam/e-Paper.git && \
-    cd e-Paper/RaspberryPi_JetsonNano/python && \
-    /opt/venv/bin/python setup.py install && \
-    cd ../../.. && \
-    rm -rf e-Paper
 
 # Create app user for security
 RUN useradd --create-home --shell /bin/bash pokemon

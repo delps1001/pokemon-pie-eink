@@ -5,9 +5,6 @@ services:
     container_name: pokemon-calendar
     restart: unless-stopped
     
-    # Memory limits for Pi Zero W 2 (512MB total RAM)
-    mem_limit: 256m
-    
     # Pi-specific configurations
     privileged: true  # Required for GPIO/SPI access
     devices:
@@ -18,15 +15,14 @@ services:
     environment:
       - POKEMON_WEB_HOST=0.0.0.0
       - POKEMON_WEB_PORT=8000
-      - POKEMON_CONFIG_FILE=/app/config.json
       - POKEMON_DEMO_MODE=false
       - TZ=America/New_York
     
     # Persistent storage for cache and config
     volumes:
-      - pokemon_cache:/home/pi/pokemon-calendar/pokemon_cache
-      - pokemon_config:/home/pi/pokemon-calendar/config
-      - ./config.json:/home/pi/pokemon-calendar/config.json
+      - pokemon_cache:/home/pokemon/app/pokemon_cache
+      - pokemon_config:/home/pokemon/app/config
+      - ./config.json:/home/pokemon/app/config.json
     
     # Network access
     ports:
@@ -43,9 +39,6 @@ services:
     container_name: watchtower
     restart: unless-stopped
     
-    # Memory limits
-    mem_limit: 64m
-
     # Docker socket access for container management
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
