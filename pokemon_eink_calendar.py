@@ -24,13 +24,14 @@ from pokemon_data_with_types import POKEMON_DATA, get_pokemon_info, get_pokemon_
 from type_icons import get_all_type_icons_for_pokemon
 from pokemon_pokedex_descriptions import get_pokedex_description
 
-# Add the waveshare library path - support both display types
+# Add the waveshare library path - support multiple display types
 try:
-    from waveshare_epd import epd7in5_HD, epd7in3e
+    from waveshare_epd import epd7in5_HD, epd7in3e, epd7in5_V2
 except ImportError:
     print("Warning: waveshare_epd library not found. Running in simulation mode.")
     epd7in5_HD = None
     epd7in3e = None
+    epd7in5_V2 = None
 
 # Import color mapping for 7-color display
 from color_mapping import SevenColorMapper
@@ -80,6 +81,10 @@ class PokemonEInkCalendar:
             self.display_width = display_config.get('width', 880)
             self.display_height = display_config.get('height', 528)
             self.color_mode = 'monochrome'
+        elif self.display_type == '7in5_V2':
+            self.display_width = 800
+            self.display_height = 480
+            self.color_mode = 'monochrome'
         
         # Initialize color mapper for 7-color displays
         self.color_mapper = None
@@ -113,14 +118,37 @@ class PokemonEInkCalendar:
         
         if self.display_type == '7in5_HD' and epd7in5_HD:
             try:
+                logging.info("Starting 7.5\" HD display initialization...")
                 self.epd = epd7in5_HD.EPD()
-                self.epd.init()
-                self.epd.Clear()
-                self.epd_type = '7in5_HD'
-                logging.info("7.5\" HD E-ink display initialized successfully")
+                logging.info("EPD object created, calling init()...")
+                
+                # Add timeout mechanism for init()
+                import signal
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("EPD init() timed out after 30 seconds")
+                
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)  # 30 second timeout
+                
+                try:
+                    self.epd.init()
+                    signal.alarm(0)  # Cancel timeout
+                    logging.info("EPD init() completed, calling Clear()...")
+                    self.epd.Clear()
+                    logging.info("EPD Clear() completed")
+                    self.epd_type = '7in5_HD'
+                    logging.info("7.5\" HD E-ink display initialized successfully")
+                except TimeoutError as te:
+                    signal.alarm(0)  # Cancel timeout
+                    raise te
+                    
             except Exception as e:
                 logging.error(f"Failed to initialize 7.5\" HD display: {e}")
+                logging.error(f"Exception type: {type(e).__name__}")
+                logging.error(f"Exception details: {str(e)}")
                 self.epd = None
+                # Fall back to simulation mode
+                logging.info("Falling back to simulation mode due to display initialization failure")
         
         elif self.display_type == '7in3e' and epd7in3e:
             try:
@@ -150,6 +178,39 @@ class PokemonEInkCalendar:
                     
             except Exception as e:
                 logging.error(f"Failed to initialize 7.3\" 7-color display: {e}")
+                logging.error(f"Exception type: {type(e).__name__}")
+                logging.error(f"Exception details: {str(e)}")
+                self.epd = None
+                # Fall back to simulation mode
+                logging.info("Falling back to simulation mode due to display initialization failure")
+        elif self.display_type == '7in5_V2' and epd7in5_V2:
+            try:
+                logging.info("Starting 7.5\" V2 display initialization...")
+                self.epd = epd7in5_V2.EPD()
+                logging.info("EPD object created, calling init()...")
+                
+                # Add timeout mechanism for init()
+                import signal
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("EPD init() timed out after 30 seconds")
+                
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)  # 30 second timeout
+                
+                try:
+                    self.epd.init()
+                    signal.alarm(0)  # Cancel timeout
+                    logging.info("EPD init() completed, calling Clear()...")
+                    self.epd.Clear()
+                    logging.info("EPD Clear() completed")
+                    self.epd_type = '7in5_V2'
+                    logging.info("7.5\" V2 E-ink display initialized successfully")
+                except TimeoutError as te:
+                    signal.alarm(0)  # Cancel timeout
+                    raise te
+                    
+            except Exception as e:
+                logging.error(f"Failed to initialize 7.5\" V2 display: {e}")
                 logging.error(f"Exception type: {type(e).__name__}")
                 logging.error(f"Exception details: {str(e)}")
                 self.epd = None

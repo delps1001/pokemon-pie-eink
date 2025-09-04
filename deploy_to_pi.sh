@@ -2,7 +2,7 @@
 
 # Configuration
 PI_USER="pi"
-PI_HOST="192.168.1.163"  # Change this to your Pi's IP address if needed
+PI_HOST="192.168.1.133"  # Change this to your Pi's IP address if needed
 PI_DESTINATION="/home/pi/pokemon-calendar/"
 
 while [[ $# -gt 0 ]]; do

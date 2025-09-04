@@ -1097,6 +1097,7 @@ class PokemonWebServer:
                             <select id="display-type-select" class="config-input" onchange="displayTypeChanged()">
                                 <option value="7in5_HD">7.5" HD Monochrome (880x528)</option>
                                 <option value="7in3e">7.3" ACeP 7-Color (800x480)</option>
+                                <option value="7in5_V2">7.5" HD Monochrome (800x480)</option>
                             </select>
                             <button id="switch-display-type-btn" onclick="switchDisplayType()" class="config-btn">🖥️ Switch Display</button>
                         </div>
