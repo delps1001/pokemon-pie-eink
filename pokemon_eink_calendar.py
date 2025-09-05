@@ -1197,8 +1197,7 @@ class PokemonEInkCalendar:
         
         # Schedule midnight updates for normal mode
         schedule.every().day.at("00:00").do(self.midnight_update)
-        schedule.every().hour.do(self.midnight_update)  # Backup hourly check
-        
+
         last_demo_check = 0
         
         while True:
