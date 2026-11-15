@@ -18,6 +18,7 @@ import schedule
 import threading
 import numpy as np
 import random
+import hashlib
 
 # Import Pokemon data with types and generations
 from pokemon_data_with_types import POKEMON_DATA, get_pokemon_info, get_pokemon_types, get_pokemon_generation
@@ -98,6 +99,11 @@ class PokemonEInkCalendar:
         self.start_date = datetime.strptime(pokemon_config.get('start_date', '2024-01-01'), '%Y-%m-%d')
         self.cycle_all_pokemon = pokemon_config.get('cycle_all_pokemon', True)
         self.custom_pokemon_list = pokemon_config.get('custom_pokemon_list', [])
+
+        # Shiny Pokemon (color displays only): each day, each Pokemon has a
+        # 1-in-shiny_odds chance of showing its shiny sprite
+        self.shiny_enabled = pokemon_config.get('shiny_enabled', True)
+        self.shiny_odds = max(1, int(pokemon_config.get('shiny_odds', 100)))
         
         # Pokemon data
         self.pokemon_data = []
@@ -442,6 +448,40 @@ class PokemonEInkCalendar:
         if len(self.pokemon_data) == 0:
             logging.error("No Pokemon sprites found in any directory!")
             raise FileNotFoundError("No Pokemon sprites found")
+
+        self.load_shiny_sprites()
+
+    def load_shiny_sprites(self):
+        """Attach shiny sprite paths (earliest_pokemon_sprites_shiny/) to the Pokemon data"""
+        shiny_dir = Path("earliest_pokemon_sprites_shiny")
+        if not shiny_dir.exists():
+            logging.info("No shiny sprite directory found; shiny Pokemon disabled "
+                         "(run extract_earliest_sprites.py to generate them)")
+            return
+
+        count = 0
+        for pokemon in self.pokemon_data:
+            shiny_path = shiny_dir / f"{pokemon['id']:04d}.png"
+            if shiny_path.exists():
+                pokemon['local_shiny_sprite'] = str(shiny_path)
+                count += 1
+        logging.info(f"Loaded {count} shiny sprites from: {shiny_dir}")
+
+    def is_shiny(self, pokemon, date=None):
+        """Whether this Pokemon is shiny on the given date (default: today).
+
+        Only applies to color displays. The roll is a 1-in-shiny_odds chance made
+        deterministically from the date and Pokemon ID, so every refresh, preview and
+        restart on the same day agrees, and a given Pokemon can be shiny on some days
+        and not others. (hashlib rather than hash(), which is randomized per process.)
+        """
+        if not self.shiny_enabled or self.color_mode != '7color':
+            return False
+        if not pokemon.get('local_shiny_sprite'):
+            return False
+        date = date or datetime.now().date()
+        digest = hashlib.sha256(f"shiny:{date.isoformat()}:{pokemon['id']}".encode()).digest()
+        return int.from_bytes(digest[:8], 'big') % self.shiny_odds == 0
 
     def enhance_sprite_for_eink(self, sprite):
         """
@@ -849,6 +889,9 @@ class PokemonEInkCalendar:
         # SPRITE - Load and process Pokemon sprite
         sprite = None
         sprite_path = pokemon.get('local_sprite')
+        if self.is_shiny(pokemon):
+            sprite_path = pokemon['local_shiny_sprite']
+            logging.info(f"✨ Shiny {pokemon['name']} today!")
         if sprite_path and os.path.exists(sprite_path):
             try:
                 sprite = Image.open(sprite_path)

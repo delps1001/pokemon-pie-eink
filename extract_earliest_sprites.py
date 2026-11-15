@@ -3,7 +3,19 @@
 Pokemon Sprite Extractor - Extract Earliest Game Sprites
 Extract sprites for Pokemon 1-1025 using the earliest possible sprite version from each Pokemon's debut game.
 Resizes all sprites to match Pokemon Home dimensions (96x96 pixels).
+
+Also extracts the shiny variant of every sprite into earliest_pokemon_sprites_shiny/.
+Shiny sprites follow the same "earliest generation" rule as the regular ones, with
+two exceptions because shinies did not exist everywhere:
+  * Gen I Pokemon (no shiny in Red/Blue/Yellow) use the Gen II Gold shiny.
+  * Generations whose version folders have no shiny art (the icon sets used for
+    Gen VII/VIII, and Gen IX) fall back to the Pokemon Home shiny.
+
+Usage:
+    python3 extract_earliest_sprites.py [--sprites-base PATH] [--shiny-only | --no-shiny]
 """
+
+import argparse
 
 import os
 import sys
@@ -74,6 +86,23 @@ GENERATION_PATHS = {
     ]
 }
 
+# Base folder of the PokeAPI/sprites checkout's "pokemon" directory. Every path in
+# GENERATION_PATHS above starts with this prefix; --sprites-base swaps it out.
+DEFAULT_SPRITES_BASE = "sprites/sprites/sprites/pokemon"
+SPRITES_BASE = DEFAULT_SPRITES_BASE
+
+
+def _rebase(path):
+    """Point a hard-coded sprite path at the configured SPRITES_BASE."""
+    return SPRITES_BASE + path[len(DEFAULT_SPRITES_BASE):]
+
+
+# Shiny sprites live in a "shiny/" subfolder next to the regular ones. Gen I has none
+# (shinies debuted in Gen II), so Gen I Pokemon use the Gen II Gold shiny instead.
+SHINY_EXTRA_PATHS = {
+    1: ["sprites/sprites/sprites/pokemon/versions/generation-ii/gold"],
+}
+
 def get_pokemon_generation(pokemon_id):
     """Determine which generation a Pokemon belongs to."""
     for gen, pokemon_list in POKEMON_GENERATIONS.items():
@@ -88,15 +117,34 @@ def find_earliest_sprite(pokemon_id):
     # Check generation-specific paths first
     if generation in GENERATION_PATHS:
         for sprite_path in GENERATION_PATHS[generation]:
-            sprite_file = os.path.join(sprite_path, f"{pokemon_id}.png")
+            sprite_file = os.path.join(_rebase(sprite_path), f"{pokemon_id}.png")
             if os.path.exists(sprite_file):
                 return sprite_file, f"Gen {generation} ({os.path.basename(sprite_path)})"
     
     # Fallback to Pokemon Home sprites
-    home_sprite = f"sprites/sprites/sprites/pokemon/{pokemon_id}.png"
+    home_sprite = f"{SPRITES_BASE}/{pokemon_id}.png"
     if os.path.exists(home_sprite):
         return home_sprite, "Pokemon Home (fallback)"
     
+    return None, "Not found"
+
+def find_earliest_shiny_sprite(pokemon_id):
+    """Find the shiny sprite from the same generation as the regular sprite.
+
+    Falls back to the Gen II Gold shiny for Gen I, and to the Pokemon Home shiny
+    when the generation's version folders contain no shiny art.
+    """
+    generation = get_pokemon_generation(pokemon_id)
+
+    for sprite_path in GENERATION_PATHS.get(generation, []) + SHINY_EXTRA_PATHS.get(generation, []):
+        sprite_file = os.path.join(_rebase(sprite_path), "shiny", f"{pokemon_id}.png")
+        if os.path.exists(sprite_file):
+            return sprite_file, f"Gen {generation} shiny ({os.path.basename(sprite_path)})"
+
+    home_sprite = f"{SPRITES_BASE}/shiny/{pokemon_id}.png"
+    if os.path.exists(home_sprite):
+        return home_sprite, "Pokemon Home shiny (fallback)"
+
     return None, "Not found"
 
 def resize_sprite(input_path, output_path, target_size=(96, 96)):
@@ -133,14 +181,14 @@ def resize_sprite(input_path, output_path, target_size=(96, 96)):
         shutil.copy2(input_path, output_path)
         return False
 
-def main():
-    """Extract earliest sprites for Pokemon 1-1025."""
+def extract_all(find_fn, output_dir, label):
+    """Extract sprites for Pokemon 1-1025 using find_fn to locate each source file."""
     
     # Create output directory
-    output_dir = Path("earliest_pokemon_sprites")
+    output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
     
-    print(f"🎯 Extracting earliest sprites for Pokemon #1-1025")
+    print(f"🎯 Extracting earliest {label} sprites for Pokemon #1-1025")
     print(f"📁 Output directory: {output_dir.absolute()}")
     print(f"🎨 Target size: 96x96 pixels (Pokemon Home standard)")
     print()
@@ -155,7 +203,7 @@ def main():
     source_stats = {}
     
     for pokemon_id in range(1, 1026):
-        sprite_path, source = find_earliest_sprite(pokemon_id)
+        sprite_path, source = find_fn(pokemon_id)
         
         if sprite_path:
             found += 1
@@ -205,6 +253,23 @@ def main():
     if not HAS_PIL:
         print("\n💡 To enable sprite resizing, install PIL:")
         print("pip3 install --user --break-system-packages Pillow")
+
+def main():
+    global SPRITES_BASE
+    parser = argparse.ArgumentParser(description="Extract earliest-generation Pokemon sprites (regular and shiny).")
+    parser.add_argument("--sprites-base", default=DEFAULT_SPRITES_BASE,
+                        help="Path to the 'pokemon' folder of a PokeAPI/sprites checkout "
+                             f"(default: {DEFAULT_SPRITES_BASE})")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--shiny-only", action="store_true", help="Only extract shiny sprites")
+    group.add_argument("--no-shiny", action="store_true", help="Skip shiny sprites")
+    args = parser.parse_args()
+    SPRITES_BASE = args.sprites_base.rstrip("/")
+
+    if not args.shiny_only:
+        extract_all(find_earliest_sprite, "earliest_pokemon_sprites", "regular")
+    if not args.no_shiny:
+        extract_all(find_earliest_shiny_sprite, "earliest_pokemon_sprites_shiny", "shiny")
 
 if __name__ == "__main__":
     main()
