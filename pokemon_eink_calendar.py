@@ -819,6 +819,16 @@ class PokemonEInkCalendar:
                 actual_index = min(start_index + days_since_start, len(self.pokemon_data) - 1)
                 return self.pokemon_data[actual_index]
 
+    @staticmethod
+    def draw_sparkle(draw, cx, cy, r, fill, outline):
+        """Draw a 4-point sparkle star centered at (cx, cy) with an outline"""
+        def star(radius):
+            n = radius * 0.28  # pinch of the inner points
+            return [(cx, cy - radius), (cx + n, cy - n), (cx + radius, cy), (cx + n, cy + n),
+                    (cx, cy + radius), (cx - n, cy + n), (cx - radius, cy), (cx - n, cy - n)]
+        draw.polygon(star(r + 3), fill=outline)
+        draw.polygon(star(r), fill=fill)
+
     def create_display_image(self):
         """Create pixel-perfect e-ink display image following exact specifications"""
         # Canvas & grid - exact specifications
@@ -889,7 +899,8 @@ class PokemonEInkCalendar:
         # SPRITE - Load and process Pokemon sprite
         sprite = None
         sprite_path = pokemon.get('local_sprite')
-        if self.is_shiny(pokemon):
+        shiny_today = self.is_shiny(pokemon)
+        if shiny_today:
             sprite_path = pokemon['local_shiny_sprite']
             logging.info(f"✨ Shiny {pokemon['name']} today!")
         if sprite_path and os.path.exists(sprite_path):
@@ -972,6 +983,19 @@ class PokemonEInkCalendar:
             dex_bbox = draw.textbbox((0, 0), pokemon_id_text, font=self.font_dex_number)
             dex_height = dex_bbox[3] - dex_bbox[1]
             draw.text((RIGHT['x'], y), pokemon_id_text, font=self.font_dex_number, fill=BLACK)
+
+            # Shiny badge: sparkles + "SHINY" beside the dex number (7-color displays only)
+            if shiny_today:
+                gold = (255, 255, 0)
+                badge_x = RIGHT['x'] + (dex_bbox[2] - dex_bbox[0]) + 20
+                mid_y = y + dex_bbox[1] + dex_height // 2
+                self.draw_sparkle(draw, badge_x + 13, mid_y, 13, gold, BLACK)
+                shiny_label = "SHINY"
+                label_bbox = draw.textbbox((0, 0), shiny_label, font=self.font_dex_number)
+                label_x = badge_x + 38
+                draw.text((label_x, mid_y - (label_bbox[1] + label_bbox[3]) // 2), shiny_label,
+                          font=self.font_dex_number, fill=BLACK)
+                self.draw_sparkle(draw, label_x + (label_bbox[2] - label_bbox[0]) + 26, mid_y, 13, gold, BLACK)
             y += dex_height + 8  # 8px below dex line
         
         # Pokemon name with autosizing
