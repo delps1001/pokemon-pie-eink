@@ -667,9 +667,55 @@ class PokemonEInkCalendar:
             lines.append(current_line)
         
         return lines
+    
+    def wrap_text_improved(self, text, font, max_width):
+        """Improved text wrapping with better word breaking and hyphenation support"""
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+        
+        # Create a temporary draw object to measure text
+        temp_img = Image.new('1', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
+        
+        for word in words:
+            # Test if adding this word would exceed the width
+            test_line = current_line + " " + word if current_line else word
+            bbox = temp_draw.textbbox((0, 0), test_line, font=font)
+            text_width = bbox[2] - bbox[0]
+            
+            if text_width <= max_width:
+                current_line = test_line
+            else:
+                # If current line has content, save it and start new line
+                if current_line:
+                    lines.append(current_line)
+                    current_line = word
+                else:
+                    # Single word is too long, try to break it
+                    if len(word) > 8:  # Only break long words
+                        # Try to fit as much as possible with hyphen
+                        for i in range(len(word) - 1, 0, -1):
+                            test_word = word[:i] + "-"
+                            bbox = temp_draw.textbbox((0, 0), test_word, font=font)
+                            if bbox[2] - bbox[0] <= max_width:
+                                lines.append(test_word)
+                                current_line = word[i:]
+                                break
+                        else:
+                            # If we can't break it, just add the word as is
+                            current_line = word
+                    else:
+                        current_line = word
+        
+        # Add the last line if it exists
+        if current_line:
+            lines.append(current_line)
+        
+        return lines
 
     def add_generation_authentic_type_icons(self, image, pokemon, area_x, area_y, area_width):
-        """Add authentic generation-specific Pokemon type icons to the display"""
+        """Add authentic generation-specific Pokemon type icons to the display (centered)"""
         try:
             # Get type information
             pokemon_types = pokemon.get('types', [])
@@ -691,13 +737,14 @@ class PokemonEInkCalendar:
             
             # Load and process type icons with authentic scaling
             type_icons = []
+            total_width = 0
+            
             for icon_path in type_icon_paths:
                 try:
                     if icon_path.exists():
                         type_icon = Image.open(icon_path)
                         
                         # Scale type icons for e-ink visibility while preserving authenticity
-                        # Type icons are typically 32x14 or similar, scale up for e-ink readability
                         target_height = 32  # Good balance between authenticity and visibility
                         scale_factor = target_height / type_icon.height
                         new_width = int(type_icon.width * scale_factor)
@@ -710,6 +757,10 @@ class PokemonEInkCalendar:
                         type_icon = self.enhance_sprite_for_eink(type_icon)
                         
                         type_icons.append(type_icon)
+                        total_width += new_width
+                        if len(type_icons) > 1:
+                            total_width += 8  # Gap between icons
+                        
                         logging.info(f"Loaded authentic Gen-{pokemon_generation} type icon: {icon_path.name} -> {new_width}x{new_height}")
                     
                 except Exception as e:
@@ -718,8 +769,8 @@ class PokemonEInkCalendar:
             if not type_icons:
                 return False
             
-            # Calculate positioning for type icons (left-aligned in text column)
-            start_x = area_x  # Left-align to start of text column
+            # Calculate centered positioning for type icons
+            start_x = area_x - (total_width // 2)  # Center relative to area_x
             
             # Paste type icons onto the main image
             current_x = start_x
@@ -727,7 +778,7 @@ class PokemonEInkCalendar:
                 image.paste(type_icon, (current_x, area_y))
                 current_x += type_icon.width + 8  # 8px gap between icons
             
-            logging.info(f"Added {len(type_icons)} authentic Gen-{pokemon_generation} type icons for {pokemon['name']}: {', '.join(pokemon_types)}")
+            logging.info(f"Added {len(type_icons)} centered authentic Gen-{pokemon_generation} type icons for {pokemon['name']}: {', '.join(pokemon_types)}")
             return True
             
         except Exception as e:
@@ -830,7 +881,7 @@ class PokemonEInkCalendar:
         draw.polygon(star(r), fill=fill)
 
     def create_display_image(self):
-        """Create pixel-perfect e-ink display image following exact specifications"""
+        """Create pixel-perfect e-ink display image with distinct sections"""
         # Canvas & grid - exact specifications
         base_W, base_H = self.display_width, self.display_height  # 880 × 528
         
@@ -855,6 +906,8 @@ class PokemonEInkCalendar:
         
         M = 24  # Safe margin
         G = 24  # Column gap
+        SEPARATOR_HEIGHT = 2  # Height of section separators
+        SECTION_GAP = 16  # Gap between sections
         
         # Create blank white canvas (full size) - mode depends on display type
         if self.color_mode == '7color':
@@ -873,27 +926,48 @@ class PokemonEInkCalendar:
         if self.color_mode == '7color':
             BLACK = (0, 0, 0)
             WHITE = (255, 255, 255)
+            LIGHT_GRAY = (200, 200, 200)
         else:
             BLACK = 0
             WHITE = 255
+            LIGHT_GRAY = 0  # Use black for separators in monochrome
         
         # Get current Pokemon
         pokemon = self.get_current_pokemon()
         
-        # Regions (proportional to effective canvas) - maintain layout proportions
-        # Original layout: SPRITE_BOX was 448x448 on 880x528 canvas (51% width, 85% height)
+        # Define three distinct sections with improved layout
         sprite_box_width = int(W * 0.51)  # Maintain proportion
         sprite_box_height = int(H * 0.85)  # Maintain proportion
-        
-        # Ensure sprite box is square (use smaller dimension)
         sprite_box_size = min(sprite_box_width, sprite_box_height)
         
         SPRITE_BOX = {'x': M, 'y': M, 'w': sprite_box_size, 'h': sprite_box_size}
-        RIGHT = {
-            'x': M + SPRITE_BOX['w'] + G,
+        
+        # Calculate right column areas with distinct sections
+        right_column_x = M + SPRITE_BOX['w'] + G
+        right_column_width = W - right_column_x - M
+        
+        # Section 1: Date (top 25% of right column)
+        DATE_SECTION = {
+            'x': right_column_x,
             'y': M,
-            'w': W - (M + SPRITE_BOX['w'] + G) - M,
-            'h': H - 2*M
+            'w': right_column_width,
+            'h': int((H - 2*M) * 0.25)
+        }
+        
+        # Section 2: Pokemon Info (next 35% of right column)
+        INFO_SECTION = {
+            'x': right_column_x,
+            'y': DATE_SECTION['y'] + DATE_SECTION['h'] + SECTION_GAP,
+            'w': right_column_width,
+            'h': int((H - 2*M) * 0.35)
+        }
+        
+        # Section 3: Description (remaining space)
+        DESC_SECTION = {
+            'x': right_column_x,
+            'y': INFO_SECTION['y'] + INFO_SECTION['h'] + SECTION_GAP,
+            'w': right_column_width,
+            'h': H - M - (INFO_SECTION['y'] + INFO_SECTION['h'] + SECTION_GAP)
         }
         
         # SPRITE - Load and process Pokemon sprite
@@ -952,9 +1026,6 @@ class PokemonEInkCalendar:
                           placeholder_y + placeholder_size // 2 - 12), 
                          no_image_text, font=self.font_date_full, fill=BLACK)
         
-        # TEXT CONTENT - All coordinates relative to RIGHT column
-        y = RIGHT['y']  # Start at top of right column
-        
         # Get text content
         current_date = datetime.now()
         weekday = current_date.strftime("%A")
@@ -962,99 +1033,225 @@ class PokemonEInkCalendar:
         pokemon_name = pokemon.get('name', f"Pokemon #{pokemon['id']:03d}")
         pokemon_id_text = f"#{pokemon['id']:03d}"
         
-        # DATE BLOCK (top-aligned, left-aligned)
+        # SECTION 1: DATE BLOCK with elegant separator
+        date_y = DATE_SECTION['y'] + 8  # Start with small padding
+        
         if self.font_date_weekday:
-            # Weekday at (x=0, y=0) relative to right column
             weekday_bbox = draw.textbbox((0, 0), weekday, font=self.font_date_weekday)
             weekday_height = weekday_bbox[3] - weekday_bbox[1]
-            draw.text((RIGHT['x'], y), weekday, font=self.font_date_weekday, fill=BLACK)
-            y += weekday_height + 8  # 8px below weekday baseline
+            # Center weekday horizontally in date section
+            weekday_width = weekday_bbox[2] - weekday_bbox[0]
+            weekday_x = DATE_SECTION['x'] + (DATE_SECTION['w'] - weekday_width) // 2
+            draw.text((weekday_x, date_y), weekday, font=self.font_date_weekday, fill=BLACK)
+            date_y += weekday_height + 6
         
         if self.font_date_full:
-            # Full date on next line
             date_bbox = draw.textbbox((0, 0), full_date, font=self.font_date_full)
             date_height = date_bbox[3] - date_bbox[1]
-            draw.text((RIGHT['x'], y), full_date, font=self.font_date_full, fill=BLACK)
-            y += date_height + 16  # 16px after date block
+            # Center full date horizontally in date section
+            date_width = date_bbox[2] - date_bbox[0]
+            date_x = DATE_SECTION['x'] + (DATE_SECTION['w'] - date_width) // 2
+            draw.text((date_x, date_y), full_date, font=self.font_date_full, fill=BLACK)
+            date_y += date_height
         
-        # DEX NUMBER + NAME (left-aligned)
-        if self.font_dex_number:
-            # Dex number on one line
-            dex_bbox = draw.textbbox((0, 0), pokemon_id_text, font=self.font_dex_number)
-            dex_height = dex_bbox[3] - dex_bbox[1]
-            draw.text((RIGHT['x'], y), pokemon_id_text, font=self.font_dex_number, fill=BLACK)
+        # Add elegant separator line after date section
+        separator_y = DATE_SECTION['y'] + DATE_SECTION['h']
+        draw.rectangle([
+            DATE_SECTION['x'] + 20, separator_y,
+            DATE_SECTION['x'] + DATE_SECTION['w'] - 20, separator_y + SEPARATOR_HEIGHT
+        ], fill=LIGHT_GRAY)
+        
+        # SECTION 2: POKEMON INFO with improved layout
+        info_y = INFO_SECTION['y'] + 8  # Start with padding
+        
+        # Combined Pokemon number and name on same line with visual separation
+        if self.font_name_primary and pokemon_name and self.font_dex_number:
+            # Shiny sparkle (7-color only) sits after the name; reserve its width in the layout
+            SPARKLE_R = 14
+            badge_width = (8 + 2 * SPARKLE_R) if shiny_today else 0
 
-            # Shiny badge: a single yellow sparkle beside the dex number (7-color displays only)
-            if shiny_today:
-                badge_x = RIGHT['x'] + (dex_bbox[2] - dex_bbox[0]) + 20
-                mid_y = y + dex_bbox[1] + dex_height // 2
-                self.draw_sparkle(draw, badge_x + 14, mid_y, 14, (255, 255, 0), BLACK)
-            y += dex_height + 8  # 8px below dex line
-        
-        # Pokemon name with autosizing
-        if self.font_name_primary and pokemon_name:
+            # Calculate optimal sizes for number and name separately
             name_font = self.font_name_primary
-            name_size = 52  # Start at target size
+            name_size = 52
             
-            # Autosize: start at 52px, decrement by 2px until fits or reaches 34px
-            while name_size >= 34:
+            # Find the best size where both number and name fit together
+            while name_size >= 28:  # Increased minimum size
                 try:
-                    test_font = ImageFont.truetype(self.font_name_primary.path, name_size)
-                    name_bbox = draw.textbbox((0, 0), pokemon_name, font=test_font)
-                    measured_width = name_bbox[2] - name_bbox[0]
+                    # Use smaller font for number (about 70% of name size)
+                    number_size = max(int(name_size * 0.7), 18)
+                    number_font = ImageFont.truetype(self.font_dex_number.path, number_size)
+                    name_test_font = ImageFont.truetype(self.font_name_primary.path, name_size)
                     
-                    if measured_width <= RIGHT['w']:
-                        name_font = test_font
+                    # Measure both parts separately
+                    number_bbox = draw.textbbox((0, 0), pokemon_id_text, font=number_font)
+                    name_bbox = draw.textbbox((0, 0), pokemon_name, font=name_test_font)
+                    
+                    # Calculate total width with spacing
+                    number_width = number_bbox[2] - number_bbox[0]
+                    name_width = name_bbox[2] - name_bbox[0]
+                    spacing = 12  # Space between number and name
+                    total_width = number_width + spacing + name_width + badge_width
+                    
+                    if total_width <= INFO_SECTION['w']:
+                        # Found a good fit
                         break
                     
                     name_size -= 2
                 except:
-                    # Fallback if font path not available
-                    name_bbox = draw.textbbox((0, 0), pokemon_name, font=name_font)
-                    measured_width = name_bbox[2] - name_bbox[0]
-                    if measured_width <= RIGHT['w']:
-                        break
-                    name_font = self.font_date_full  # Fallback
-                    break
+                    name_size -= 2
+                    continue
             
-            # Draw name
+            # Create the fonts
+            try:
+                number_size = max(int(name_size * 0.7), 18)
+                number_font = ImageFont.truetype(self.font_dex_number.path, number_size)
+                name_font = ImageFont.truetype(self.font_name_primary.path, name_size)
+            except:
+                number_font = self.font_dex_number
+                name_font = self.font_name_primary
+            
+            # Calculate positioning for centered layout
+            number_bbox = draw.textbbox((0, 0), pokemon_id_text, font=number_font)
             name_bbox = draw.textbbox((0, 0), pokemon_name, font=name_font)
-            name_height = name_bbox[3] - name_bbox[1]
-            draw.text((RIGHT['x'], y), pokemon_name, font=name_font, fill=BLACK)
-            y += name_height + 12  # 12px after name
             
-            logging.info(f"Pokemon name '{pokemon_name}' rendered at {name_size}px")
+            number_width = number_bbox[2] - number_bbox[0]
+            name_width = name_bbox[2] - name_bbox[0]
+            number_height = number_bbox[3] - number_bbox[1]
+            name_height = name_bbox[3] - name_bbox[1]
+            spacing = 12
+            
+            total_width = number_width + spacing + name_width + badge_width
+            start_x = INFO_SECTION['x'] + (INFO_SECTION['w'] - total_width) // 2
+            
+            # Define colors based on display mode for visual separation
+            if self.color_mode == '7color':
+                NUMBER_COLOR = (100, 100, 100)  # Dark gray for number
+                NAME_COLOR = (0, 0, 0)  # Black for name
+            else:
+                NUMBER_COLOR = BLACK  # Same color in monochrome
+                NAME_COLOR = BLACK
+            
+            # Calculate proper baseline alignment using font metrics
+            # Get the ascent and descent for both fonts to align baselines properly
+            name_x = start_x + number_width + spacing
+            
+            # Use the name font as the baseline reference (larger font)
+            name_baseline_y = info_y
+            
+            # Calculate where the number should be positioned to align baselines
+            # The baseline is measured from the top of the bounding box
+            name_ascent = name_bbox[3] - name_bbox[1] - (name_bbox[3] - name_bbox[1] - name_height)  # Approximate ascent
+            number_ascent = number_bbox[3] - number_bbox[1] - (number_bbox[3] - number_bbox[1] - number_height)  # Approximate ascent
+            
+            # More robust approach: use the actual font metrics if available
+            try:
+                # Try to get actual font metrics for precise baseline alignment
+                name_metrics = name_font.getmetrics()  # Returns (ascent, descent)
+                number_metrics = number_font.getmetrics()
+                
+                # Align baselines: both fonts should have their baseline at the same Y position
+                baseline_y = info_y + name_metrics[0]  # Add ascent to get baseline position
+                
+                # Position name at baseline
+                name_y = baseline_y - name_metrics[0]  # Subtract ascent to get top position
+                
+                # Position number at same baseline
+                number_y = baseline_y - number_metrics[0]  # Subtract ascent to get top position
+                
+            except (AttributeError, TypeError):
+                # Fallback: estimate baseline alignment using bounding box
+                # Assume baseline is roughly 80% down from the top of the character height
+                baseline_offset_ratio = 0.8
+                
+                name_baseline_offset = int(name_height * baseline_offset_ratio)
+                number_baseline_offset = int(number_height * baseline_offset_ratio)
+                
+                # Set name position
+                name_y = info_y
+                baseline_y = name_y + name_baseline_offset
+                
+                # Align number to same baseline
+                number_y = baseline_y - number_baseline_offset
+            
+            number_x = start_x
+            
+            # Draw Pokemon number (smaller, lighter) - baseline aligned
+            draw.text((number_x, number_y), pokemon_id_text, font=number_font, fill=NUMBER_COLOR)
+            
+            # Draw Pokemon name (larger, bolder) - baseline aligned
+            draw.text((name_x, name_y), pokemon_name, font=name_font, fill=NAME_COLOR)
+
+            # Shiny badge: a single yellow sparkle after the name
+            if shiny_today:
+                self.draw_sparkle(draw, name_x + name_width + 8 + SPARKLE_R,
+                                  name_y + (name_bbox[1] + name_bbox[3]) // 2,
+                                  SPARKLE_R, (255, 255, 0), BLACK)
+            
+            # Calculate the maximum height and advance position
+            max_height = max(number_height, name_height)
+            info_y += max_height + 12
+            
+            logging.info(f"Pokemon display: #{pokemon['id']:03d} at {number_size}px, '{pokemon_name}' at {name_size}px")
+        elif self.font_dex_number and self.font_name_primary:
+            # Fallback: separate number and name if combined doesn't work
+            # Dex number (centered)
+            dex_bbox = draw.textbbox((0, 0), pokemon_id_text, font=self.font_dex_number)
+            dex_height = dex_bbox[3] - dex_bbox[1]
+            dex_width = dex_bbox[2] - dex_bbox[0]
+            dex_x = INFO_SECTION['x'] + (INFO_SECTION['w'] - dex_width) // 2
+            draw.text((dex_x, info_y), pokemon_id_text, font=self.font_dex_number, fill=BLACK)
+            if shiny_today:
+                self.draw_sparkle(draw, dex_x + dex_width + 26, info_y + dex_height // 2, 14, (255, 255, 0), BLACK)
+            info_y += dex_height + 6
+            
+            # Pokemon name (centered)
+            name_bbox = draw.textbbox((0, 0), pokemon_name, font=self.font_name_primary)
+            name_height = name_bbox[3] - name_bbox[1]
+            name_width = name_bbox[2] - name_bbox[0]
+            name_x = INFO_SECTION['x'] + (INFO_SECTION['w'] - name_width) // 2
+            draw.text((name_x, info_y), pokemon_name, font=self.font_name_primary, fill=BLACK)
+            info_y += name_height + 12
+            
+            logging.info(f"Separate Pokemon number and name rendered")
         
-        # AUTHENTIC TYPE ICONS (generation-specific sprites)
+        # Type icons (centered)
         pokemon_types = pokemon.get('types', [])
         pokemon_generation = pokemon.get('generation', 1)
         if pokemon_types:
+            # Calculate center position for type icons
+            type_start_x = INFO_SECTION['x'] + INFO_SECTION['w'] // 2
             type_icons_added = self.add_generation_authentic_type_icons(
-                content_image, pokemon, RIGHT['x'], y, RIGHT['w']
+                content_image, pokemon, type_start_x, info_y, INFO_SECTION['w']
             )
             if type_icons_added:
-                y += 32 + 16  # Height of type icons + gap
+                info_y += 32 + 4  # Further reduced gap to 4 pixels
                 logging.info(f"Added authentic Gen-{pokemon_generation} type icons for {pokemon['name']}: {', '.join(pokemon_types)}")
             else:
-                # Fallback to text if icons not available (left-aligned)
-                logging.warning(f"Using text fallback for types: {', '.join(pokemon_types)}")
+                # Fallback to text (centered)
                 type_text = " / ".join(t.upper() for t in pokemon_types)
                 if self.font_type_pills:
-                    # Left-align the text fallback
-                    draw.text((RIGHT['x'], y), type_text, font=self.font_type_pills, fill=BLACK)
-                    y += 24 + 16  # Text height + gap
+                    type_bbox = draw.textbbox((0, 0), type_text, font=self.font_type_pills)
+                    type_width = type_bbox[2] - type_bbox[0]
+                    type_x = INFO_SECTION['x'] + (INFO_SECTION['w'] - type_width) // 2
+                    draw.text((type_x, info_y), type_text, font=self.font_type_pills, fill=BLACK)
+                    info_y += 24 + 4  # Further reduced gap to 4 pixels
         
-        # FLAVOR TEXT (left-aligned, paragraph)
+        # SECTION 3: DESCRIPTION with improved text wrapping
         pokemon_id = pokemon.get('id')
         if pokemon_id and self.font_flavor_text:
             pokedex_text = get_pokedex_description(pokemon_id)
             if pokedex_text:
-                # Calculate available space
-                available_height = H - y - M  # Remaining space to bottom margin
+                # Start from where type icons/text actually ended with minimal gap
+                desc_y = info_y + 4  # Use actual end position + minimal 4px gap
+                available_height = DESC_SECTION['y'] + DESC_SECTION['h'] - desc_y - 8  # Calculate remaining height
                 
-                # Start with target size, auto-shrink if needed
+                # Improved text sizing with better wrapping - NEVER truncate, always shrink font!
                 text_size = 22
-                while text_size >= 18:
+                best_font = None
+                best_lines = []
+                min_font_size = 8  # Allow very small text if needed
+                
+                while text_size >= min_font_size:
                     try:
                         if text_size != 22:
                             test_font = ImageFont.truetype(self.font_flavor_text.path, text_size)
@@ -1063,30 +1260,46 @@ class PokemonEInkCalendar:
                     except:
                         test_font = self.font_flavor_text
                     
-                    # Wrap text and count lines
-                    wrapped_lines = self.wrap_text(pokedex_text, test_font, RIGHT['w'])
-                    line_height = 28
+                    # Improved text wrapping
+                    wrapped_lines = self.wrap_text_improved(pokedex_text, test_font, DESC_SECTION['w'])
+                    
+                    # Dynamic line height based on font size
+                    line_height = max(text_size + 4, 12)  # Tighter line spacing for small text
                     total_text_height = len(wrapped_lines) * line_height
                     
-                    # Check if it fits (max 6 lines as per spec)
-                    if len(wrapped_lines) <= 6 and total_text_height <= available_height:
+                    # Check if ALL text fits at this size
+                    if total_text_height <= available_height:
+                        best_font = test_font
+                        best_lines = wrapped_lines  # Use ALL lines, no truncation
                         break
                     
                     text_size -= 1
                 
-                # Draw flavor text (limit to 6 lines max)
-                lines_to_draw = wrapped_lines[:6]
-                if len(wrapped_lines) > 6:
-                    # Add ellipsis to last line if truncated
-                    if lines_to_draw:
-                        lines_to_draw[-1] = lines_to_draw[-1].rstrip() + "…"
+                # Last resort: if even minimum font size doesn't fit, use it anyway
+                if not best_font:
+                    text_size = min_font_size
+                    try:
+                        test_font = ImageFont.truetype(self.font_flavor_text.path, text_size)
+                    except:
+                        test_font = self.font_flavor_text
+                    
+                    wrapped_lines = self.wrap_text_improved(pokedex_text, test_font, DESC_SECTION['w'])
+                    best_font = test_font
+                    best_lines = wrapped_lines  # Still no truncation, render all lines
+                    logging.warning(f"Using minimum font size {min_font_size}px for very long description")
                 
-                for line in lines_to_draw:
-                    if line.strip():
-                        draw.text((RIGHT['x'], y), line, font=test_font, fill=BLACK)
-                        y += line_height
-                
-                logging.info(f"Flavor text rendered at {text_size}px, {len(lines_to_draw)} lines")
+                # Draw the COMPLETE description text - no ellipsis, no truncation
+                if best_font and best_lines:
+                    line_height = max(text_size + 4, 12)
+                    
+                    for line in best_lines:
+                        if line.strip():
+                            draw.text((DESC_SECTION['x'], desc_y), line, font=best_font, fill=BLACK)
+                            desc_y += line_height
+                    
+                    logging.info(f"Complete description rendered at {text_size}px, {len(best_lines)} lines, no truncation")
+                else:
+                    logging.warning(f"Could not render description for Pokemon {pokemon_id} - no font available")
         
         # Demo mode indicator (small, bottom right)
         if self.demo_mode:
@@ -1108,7 +1321,7 @@ class PokemonEInkCalendar:
             image = content_image
             logging.info(f"No border inset applied, full canvas size: {W}x{H}")
         
-        logging.info(f"Border inset applied: {inset_pixels}px → Canvas: {W}x{H} (sprite: {SPRITE_BOX['w']}x{SPRITE_BOX['h']}, text: {RIGHT['w']}x{RIGHT['h']})")
+        logging.info(f"Border inset applied: {inset_pixels}px → Canvas: {W}x{H} (sprite: {SPRITE_BOX['w']}x{SPRITE_BOX['h']}, sections: date={DATE_SECTION['w']}x{DATE_SECTION['h']}, info={INFO_SECTION['w']}x{INFO_SECTION['h']}, desc={DESC_SECTION['w']}x{DESC_SECTION['h']})")
         
         return image
 
