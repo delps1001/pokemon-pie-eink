@@ -284,6 +284,11 @@ class PokemonWebServer:
                 await asyncio.sleep(1)
 
     def _setup_routes(self):
+        @self.app.get("/health")
+        async def health():
+            """Liveness probe used by the Docker HEALTHCHECK"""
+            return {"status": "ok"}
+
         @self.app.get("/", response_class=HTMLResponse)
         async def root():
             return await self._serve_web_interface()
