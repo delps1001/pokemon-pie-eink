@@ -1,6 +1,6 @@
 requests>=2.31.0
 pillow>=10.0.0
-picolay @ git+https://github.com/delps1001/picolay@86d7b73eb5b5a4093123efdb1e121af227074f54
+picolay @ git+https://github.com/delps1001/picolay@v0.2.1
 schedule>=1.2.0
 numpy>=1.21.0
 fastapi>=0.104.0
