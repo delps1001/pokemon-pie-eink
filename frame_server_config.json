@@ -1,0 +1,24 @@
+{
+  "display": {
+    "type": "7in5_V2",
+    "width": 800,
+    "height": 480,
+    "color_mode": "monochrome",
+    "border_inset": {
+      "enabled": true,
+      "pixels": 20
+    }
+  },
+  "pokemon": {
+    "start_pokemon_id": 1,
+    "start_date": "2025-08-10",
+    "cycle_all_pokemon": true,
+    "custom_pokemon_list": []
+  },
+  "demo": {
+    "enabled": false
+  },
+  "cache": {
+    "directory": "./pokemon_cache"
+  }
+}
