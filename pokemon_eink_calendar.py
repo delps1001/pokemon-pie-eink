@@ -11,7 +11,7 @@ import time
 import json
 import logging
 from datetime import datetime, timedelta
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance
 import argparse
 from pathlib import Path
 import schedule
@@ -22,7 +22,6 @@ import hashlib
 
 # Import Pokemon data with types and generations
 from pokemon_data_with_types import POKEMON_DATA, get_pokemon_info, get_pokemon_types, get_pokemon_generation
-from type_icons import get_all_type_icons_for_pokemon
 from pokemon_pokedex_descriptions import get_pokedex_description
 
 # Add the waveshare library path - support multiple display types
@@ -36,8 +35,35 @@ except ImportError:
 
 # Import color mapping for 7-color display
 from color_mapping import SevenColorMapper
-from picolay import Box, Img, Style, Text
+from picolay import Box, Img, Style, Text, compute_layout
 from picolay import render as picolay_render
+
+# Where to look for fonts, and the (regular, bold) pairs to look for, in order of preference
+FONT_DIRS = [
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/truetype/liberation",
+    "/usr/share/fonts/TTF",
+    "/Library/Fonts",
+    os.path.expanduser("~/Library/Fonts"),
+]
+FONT_FAMILIES = [
+    ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
+    ("LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf"),
+]
+
+# The colour panel's own inks. Flat areas in these show solid; anything else is dithered.
+BLACK, WHITE = (0, 0, 0), (255, 255, 255)
+RED, YELLOW, BLUE, GREEN = (255, 0, 0), (255, 255, 0), (0, 0, 255), (0, 255, 0)
+
+# Type chip colours as (fill, ink). A white fill is drawn as an outline in the ink colour.
+TYPE_CHIPS = {
+    "normal": (WHITE, BLACK), "fire": (RED, WHITE), "water": (BLUE, WHITE),
+    "grass": (GREEN, WHITE), "electric": (YELLOW, BLACK), "ice": (WHITE, BLUE),
+    "fighting": (RED, WHITE), "poison": (BLUE, WHITE), "ground": (YELLOW, BLACK),
+    "flying": (WHITE, BLUE), "psychic": (WHITE, RED), "bug": (WHITE, GREEN),
+    "rock": (YELLOW, BLACK), "ghost": (BLUE, WHITE), "dragon": (BLUE, WHITE),
+    "dark": (BLACK, WHITE), "steel": (WHITE, BLACK), "fairy": (WHITE, RED),
+}
 
 # Configure logging
 logging.basicConfig(
@@ -228,7 +254,7 @@ class PokemonEInkCalendar:
         else:
             logging.info(f"Running in simulation mode - {self.display_type} display not available")
         
-        # Load fonts (fallback to default if Font.ttc not available)
+        # Find the regular and bold fonts for the layout
         self.load_fonts()
         
         # Load Pokemon data (sprites assumed to be pre-cached)
@@ -346,52 +372,18 @@ class PokemonEInkCalendar:
             return {}
 
     def load_fonts(self):
-        """Load fonts for display text with exact specifications"""
-        font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",  # macOS
-            "/home/pi/e-Paper/RaspberryPi_JetsonNano/python/pic/Font.ttc"  # Waveshare default
-        ]
-        
-        # Font specifications per the design spec
-        self.font_date_weekday = None      # 32px for weekday
-        self.font_date_full = None         # 24px for full date
-        self.font_dex_number = None        # 24px medium for dex number
-        self.font_name_primary = None      # 52px bold for Pokemon name (will auto-shrink)
-        self.font_type_pills = None        # 18px for type pills
-        self.font_flavor_text = None       # 22px for flavor text (will auto-shrink)
-        
-        for font_path in font_paths:
-            if os.path.exists(font_path):
-                try:
-                    # Load all required font sizes
-                    self.font_date_weekday = ImageFont.truetype(font_path, 32)
-                    self.font_date_full = ImageFont.truetype(font_path, 24)
-                    self.font_dex_number = ImageFont.truetype(font_path, 24)
-                    self.font_name_primary = ImageFont.truetype(font_path, 52)
-                    self.font_type_pills = ImageFont.truetype(font_path, 18)
-                    self.font_flavor_text = ImageFont.truetype(font_path, 22)
-                    logging.info(f"Loaded spec fonts from {font_path}")
-                    break
-                except Exception as e:
-                    logging.warning(f"Failed to load font {font_path}: {e}")
-        
-        # Fallback to default font
-        if not self.font_date_weekday:
-            try:
-                default_font = ImageFont.load_default()
-                self.font_date_weekday = default_font
-                self.font_date_full = default_font
-                self.font_dex_number = default_font
-                self.font_name_primary = default_font
-                self.font_type_pills = default_font
-                self.font_flavor_text = default_font
-                logging.info("Using default fonts")
-            except:
-                logging.error("Failed to load any fonts")
+        """Find a regular and a bold face of the same family for the layout"""
+        self.font_regular = None  # None: picolay falls back to its bundled DejaVu Sans
+        self.font_bold = None
+        for regular_name, bold_name in FONT_FAMILIES:
+            for font_dir in FONT_DIRS:
+                regular_path = os.path.join(font_dir, regular_name)
+                bold_path = os.path.join(font_dir, bold_name)
+                if os.path.exists(regular_path) and os.path.exists(bold_path):
+                    self.font_regular, self.font_bold = regular_path, bold_path
+                    logging.info(f"Loaded fonts {regular_name} and {bold_name} from {font_dir}")
+                    return
+        logging.warning("No regular/bold font pair found; using picolay's bundled font for all text")
 
     def load_pokemon_data(self):
         """Load Pokemon data and assume sprites are already available locally"""
@@ -725,49 +717,31 @@ class PokemonEInkCalendar:
                 actual_index = min(start_index + days_since_start, len(self.pokemon_data) - 1)
                 return self.pokemon_data[actual_index]
 
-    def load_type_icons(self, pokemon):
-        """Load this Pokemon's generation-authentic type icons, scaled and processed for e-ink"""
-        pokemon_types = pokemon.get('types', [])
-        pokemon_generation = pokemon.get('generation', 1)
-        if not pokemon_types:
-            return []
-
-        type_icon_paths = get_all_type_icons_for_pokemon(pokemon_types, pokemon_generation, "types")
-        if not type_icon_paths:
-            logging.warning(f"No generation-{pokemon_generation} type icons found for {pokemon['name']}: {pokemon_types}")
-            return []
-
-        type_icons = []
-        for icon_path in type_icon_paths:
-            try:
-                if icon_path.exists():
-                    type_icon = Image.open(icon_path)
-                    # Scale type icons for e-ink visibility while preserving authenticity,
-                    # with nearest neighbor for pixel-perfect scaling
-                    target_height = 32
-                    new_width = int(type_icon.width * target_height / type_icon.height)
-                    type_icon = type_icon.resize((new_width, target_height), Image.Resampling.NEAREST)
-                    type_icons.append(self.enhance_sprite_for_eink(type_icon))
-                    logging.info(f"Loaded authentic Gen-{pokemon_generation} type icon: {icon_path.name} -> {new_width}x{target_height}")
-            except Exception as e:
-                logging.warning(f"Failed to load type icon {icon_path}: {e}")
-        return type_icons
-
-    def load_display_sprite(self, sprite_path, box_size):
-        """Load a sprite scaled to fit a square box and processed for e-ink, or None"""
+    def load_display_sprite(self, sprite_path, box_width, box_height):
+        """Load a sprite trimmed, scaled to fit the box and processed for e-ink, or None"""
         if not sprite_path or not os.path.exists(sprite_path):
             return None
         try:
             sprite = Image.open(sprite_path)
-            scale = min(box_size / sprite.width, box_size / sprite.height)
-            new_width = int(sprite.width * scale)
-            new_height = int(sprite.height * scale)
-            logging.info(f"Sprite scaling: original {sprite.width}x{sprite.height}, box {box_size}x{box_size}, scale {scale:.3f}, final {new_width}x{new_height}")
-            # Small (pixel-art) sprites scale with nearest neighbor to stay crisp
-            if sprite.width <= 96 and sprite.height <= 96:
-                sprite = sprite.resize((new_width, new_height), Image.Resampling.NEAREST)
+            pixel_art = sprite.width <= 96 and sprite.height <= 96
+            # Trim the transparent margin, so the art (not its canvas) fills the box
+            if sprite.mode != 'RGBA' and (sprite.mode in ('P', 'LA') or 'transparency' in sprite.info):
+                sprite = sprite.convert('RGBA')
+            if sprite.mode == 'RGBA':
+                art = sprite.getchannel('A').getbbox()
+                if art:
+                    sprite = sprite.crop(art)
+            scale = min(box_width / sprite.width, box_height / sprite.height)
+            if pixel_art:
+                # Whole-number nearest-neighbour scaling keeps every sprite pixel the same size
+                scale = max(1, int(scale))
+                resample = Image.Resampling.NEAREST
             else:
-                sprite = sprite.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                resample = Image.Resampling.LANCZOS
+            new_size = (max(1, int(sprite.width * scale)), max(1, int(sprite.height * scale)))
+            logging.info(f"Sprite scaling: art {sprite.width}x{sprite.height}, box {box_width}x{box_height}, "
+                         f"scale {scale:.3f}, final {new_size[0]}x{new_size[1]}")
+            sprite = sprite.resize(new_size, resample)
             # Dither after scaling, so the e-ink pattern is at display resolution
             return self.enhance_sprite_for_eink(sprite)
         except Exception as e:
@@ -790,34 +764,30 @@ class PokemonEInkCalendar:
         draw.polygon(star(r), fill=fill + (255,))
         return image
 
-    @staticmethod
-    def font_file(font):
-        """Path of a loaded font, or None (picolay then uses its bundled DejaVu Sans)"""
-        return getattr(font, 'path', None)
+    def type_colors(self, type_name):
+        """(fill, ink) of a type's chip; the panel's own solid colours, or black and white"""
+        fill, ink = TYPE_CHIPS.get(str(type_name).lower(), (WHITE, BLACK))
+        if self.color_mode != '7color':
+            fill, ink = (WHITE, BLACK) if fill == WHITE else (BLACK, WHITE)
+        return fill, ink
 
-    def fit_name_sizes(self, number_text, name_text, max_width, badge_width):
-        """Largest name size (52 down to 28, step 2) where '#025 Name' fits; number is 70% of it"""
-        number_path = self.font_file(self.font_dex_number)
-        name_path = self.font_file(self.font_name_primary)
-        spacing = 12  # between number and name
-
-        def width(text, path, size):
-            font = ImageFont.truetype(path, size) if path else ImageFont.load_default(size=size)
-            bbox = font.getbbox(text)
-            return bbox[2] - bbox[0]
-
-        name_size = 52
-        while name_size >= 28:
-            number_size = max(int(name_size * 0.7), 18)
-            total = width(number_text, number_path, number_size) + spacing + width(name_text, name_path, name_size) + badge_width
-            if total <= max_width:
-                break
-            name_size -= 2
-        return max(int(name_size * 0.7), 18), name_size
+    def chip(self, label, fill, ink, font_size):
+        """A small solid label; a white fill gets an outline in the ink colour"""
+        border = max(2, round(font_size / 7))
+        return Box(
+            style=Style(width='fit', height='fit', background=fill, border=(border, ink if fill == WHITE else fill),
+                        padding=(round(font_size * 0.3), round(font_size * 0.6))),
+            children=[Text(label, style=Style(font_size=font_size, font_color=ink, font_path=self.font_bold))],
+        )
 
     def create_display_image(self):
-        """Create the e-ink display image: sprite on the left; date, name, types and
-        Pokedex entry on the right. Layout is done by picolay."""
+        """Create the e-ink display image: the sprite on the left; a calendar-leaf date,
+        the Pokemon's number, name and types and its Pokedex entry on the right.
+
+        Layout is done by picolay. Every size derives from the content height, so the
+        same design holds from a 100px-inset 800x480 panel up to a bare 880x528 one.
+        Flat areas use only the panel's own colours, which it shows without dithering.
+        """
         base_W, base_H = self.display_width, self.display_height  # e.g. 880 × 528
 
         # Apply border inset configuration
@@ -833,117 +803,116 @@ class PokemonEInkCalendar:
             W, H = base_W, base_H
             inset_pixels = 0
 
-        M = 24  # Safe margin
-        G = 24  # Column gap
-        SEPARATOR_HEIGHT = 3  # Height of the line under the date
-        SECTION_GAP = 16  # Gap from the top of that line to the Pokemon info
-        SPARKLE_R = 14
-
         # picolay draws in RGB; monochrome output is converted to 1-bit at the end
         color = self.color_mode == '7color'
-        BLACK = (0, 0, 0)
-        LIGHT_GRAY = (200, 200, 200) if color else BLACK  # separator
-        NUMBER_COLOR = (100, 100, 100) if color else BLACK  # lighter dex number
+        regular, bold = self.font_regular, self.font_bold
+
+        scale = max(0.78, min(1.35, H / 360))  # 1.0 on the 800x480 panel with a 60px inset
+
+        def u(pixels):
+            return max(1, round(pixels * scale))
+
+        pad, column_gap = u(20), u(26)
+        column_height = H - 2 * pad
+        sprite_width = min(column_height, int(W * 0.46))
+        info_width = W - 2 * pad - column_gap - sprite_width
 
         pokemon = self.get_current_pokemon()
         shiny_today = self.is_shiny(pokemon)
+        types = pokemon.get('types') or []
 
-        # Sprite: a square box, 51% of the width or 85% of the height, whichever is smaller
-        sprite_box = min(int(W * 0.51), int(H * 0.85))
+        # The day's accent is the colour of the Pokemon's first type
+        accent, on_accent = self.type_colors(types[0]) if types else (BLACK, WHITE)
+        if accent == WHITE:
+            accent, on_accent = on_accent, WHITE
+        accent_ink = BLACK if accent == YELLOW else accent  # yellow is unreadable as text
+
+        # Sprite
         sprite_path = pokemon.get('local_sprite')
         if shiny_today:
             sprite_path = pokemon['local_shiny_sprite']
             logging.info(f"✨ Shiny {pokemon['name']} today!")
-        sprite = self.load_display_sprite(sprite_path, sprite_box)
+        sprite = self.load_display_sprite(sprite_path, sprite_width, column_height)
         if sprite is not None:
             # Already scaled and dithered: place it at natural size, never resampled
-            sprite_node = Img(sprite, style=Style(width=sprite_box, height=sprite_box, object_fit='none'))
+            sprite_node = Img(sprite, style=Style(width=sprite_width, height=column_height, object_fit='none'))
         else:
-            placeholder = sprite_box - 80
+            placeholder = min(sprite_width, column_height) - u(80)
             sprite_node = Box(
-                style=Style(width=sprite_box, height=sprite_box, justify_content='center', align_items='center'),
+                style=Style(width=sprite_width, height=column_height, justify_content='center', align_items='center'),
                 children=[Box(
                     style=Style(width=placeholder, height=placeholder, border=(3, BLACK),
                                 justify_content='center', align_items='center'),
-                    children=[Text("No Sprite", style=Style(font_size=24, font_path=self.font_file(self.font_date_full)))],
+                    children=[Text("No Sprite", style=Style(font_size=u(20), font_path=regular))],
                 )],
             )
 
-        # Date
+        # Date: the day of the month on a calendar leaf, beside the weekday and the month and year
         now = datetime.now()
-        date_section = Box(
-            style=Style(height=int((H - 2 * M) * 0.25), flex_direction='column', align_items='center',
-                        padding=(8, 0, 0, 0), gap=6),
-            children=[
-                Text(now.strftime("%A"), style=Style(font_size=32, font_path=self.font_file(self.font_date_weekday))),
-                Text(now.strftime("%B %d, %Y"), style=Style(font_size=24, font_path=self.font_file(self.font_date_full))),
-            ],
-        )
-        separator = Box(style=Style(height=SEPARATOR_HEIGHT, margin=(0, 20), background=LIGHT_GRAY))
+        leaf = u(58)
+        date_children = [
+            Box(style=Style(width=leaf, height=leaf, background=accent, justify_content='center', align_items='center'),
+                children=[Text(str(now.day), style=Style(font_size=u(34), font_color=on_accent, font_path=bold))]),
+            Box(style=Style(flex_grow=1, height='fit', flex_direction='column', gap=u(9)),
+                children=[
+                    Text(now.strftime("%A"), style=Style(font_size=u(27), font_path=bold, font_shrink=True,
+                                                         min_font_size=u(16))),
+                    Text(now.strftime("%B %Y"), style=Style(font_size=u(17), font_path=regular)),
+                ]),
+        ]
+        date_row = Box(style=Style(height='fit', align_items='center', gap=u(14)), children=date_children)
+        rule = Box(style=Style(height=max(2, u(2)), background=BLACK))
 
-        # "#025 Pikachu" on one baseline, shrunk together to fit, plus a sparkle if shiny
+        # Dex number (and a sparkle when shiny) over the name, which shrinks to fit
         pokemon_name = pokemon.get('name', f"Pokemon #{pokemon['id']:03d}")
-        pokemon_id_text = f"#{pokemon['id']:03d}"
-        sparkle_gap = 5
-        badge_width = (sparkle_gap + 2 * (SPARKLE_R + 3) + 1) if shiny_today else 0
-        info_width = W - 2 * M - sprite_box - G
-        number_size, name_size = self.fit_name_sizes(pokemon_id_text, pokemon_name, info_width, badge_width)
-        name_node = Text(pokemon_name, style=Style(font_size=name_size, font_path=self.font_file(self.font_name_primary)))
+        number_children = [Text(f"No. {pokemon['id']:03d}",
+                                style=Style(font_size=u(15), font_color=accent_ink, font_path=bold))]
         if shiny_today:
-            name_node = Box(
-                style=Style(width='fit', height='fit', align_items='center', gap=sparkle_gap),
-                children=[name_node, Img(self.sparkle_image(SPARKLE_R, (255, 255, 0), BLACK))],
-            )
-        name_row = Box(
-            style=Style(width='fit', height='fit', align_items='baseline', gap=12),
-            children=[
-                Text(pokemon_id_text, style=Style(font_size=number_size, font_color=NUMBER_COLOR,
-                                                  font_path=self.font_file(self.font_dex_number))),
-                name_node,
-            ],
-        )
-        logging.info(f"Pokemon display: {pokemon_id_text} at {number_size}px, '{pokemon_name}' at {name_size}px")
-
-        # Type icons, or their names as text if the icons are missing
-        info_children = [name_row]
-        type_icons = self.load_type_icons(pokemon)
-        if type_icons:
-            info_children.append(Box(
-                style=Style(width='fit', height='fit', gap=8),
-                children=[Img(icon, style=Style(object_fit='none')) for icon in type_icons],
+            number_children += [
+                Img(self.sparkle_image(u(7), YELLOW, BLACK)),
+                Text("SHINY", style=Style(font_size=u(15), font_path=bold)),
+            ]
+        if self.demo_mode:
+            number_children += [Box(style=Style(flex_grow=1, height=1)), self.chip("DEMO MODE", WHITE, BLACK, u(10))]
+        entry_children = [
+            Box(style=Style(height='fit', align_items='center', gap=u(6)), children=number_children),
+            Text(pokemon_name, style=Style(font_size=u(44), min_font_size=u(20), font_shrink=True, font_path=bold,
+                                           margin=(u(9), 0, 0, 0))),
+        ]
+        if types:
+            entry_children.append(Box(
+                style=Style(height='fit', gap=u(8), margin=(u(12), 0, 0, 0)),
+                children=[self.chip(t.upper(), *self.type_colors(t), u(13)) for t in types],
             ))
-        elif pokemon.get('types'):
-            info_children.append(Text(" / ".join(t.upper() for t in pokemon['types']),
-                                      style=Style(font_size=18, font_path=self.font_file(self.font_type_pills))))
-        info_section = Box(
-            style=Style(height='fit', flex_direction='column', align_items='center', gap=12,
-                        margin=(SECTION_GAP - SEPARATOR_HEIGHT, 0, 0, 0), padding=(8, 0, 0, 0)),
-            children=info_children,
-        )
+        entry = Box(style=Style(height='fit', flex_direction='column'), children=entry_children)
 
-        right_column = [date_section, separator, info_section]
+        section_gap = u(15)
+        heading = Box(style=Style(height='fit', flex_direction='column', gap=section_gap),
+                      children=[date_row, rule, entry])
+        info_children = [heading]
 
-        # Pokedex entry: wrapped, and shrunk (never truncated) to fill the rest of the column
+        # Pokedex entry: wrapped, and shrunk (never truncated) to what is left of the column
         pokedex_text = get_pokedex_description(pokemon['id']) if pokemon.get('id') else None
         if pokedex_text:
-            right_column.append(Text(pokedex_text, style=Style(
-                wrap=True, font_shrink=True, font_size=22, min_font_size=8, line_spacing=4,
-                font_path=self.font_file(self.font_flavor_text), flex_grow=1, margin=(8, 0, 8, 0))))
+            heading_height = compute_layout(heading, info_width, column_height, antialias=False).height
+            info_children.append(Text(pokedex_text, style=Style(
+                wrap=True, font_shrink=True, font_size=u(19), min_font_size=8, line_spacing=u(6), font_path=regular,
+                max_height=max(2, int(column_height - heading_height - section_gap)))))
 
         tree = Box(
-            style=Style(width=W, height=H, padding=M, gap=G),
-            children=[sprite_node, Box(style=Style(flex_grow=1, flex_direction='column'), children=right_column)],
+            style=Style(width=W, height=H, padding=pad, gap=column_gap),
+            children=[
+                sprite_node,
+                Box(style=Style(flex_grow=1, flex_direction='column', justify_content='center', gap=section_gap),
+                    children=info_children),
+            ],
         )
-        content_image = picolay_render(tree, W, H, antialias=color)
-
-        # Demo mode indicator (small, bottom right), drawn over the layout
-        if self.demo_mode and self.font_type_pills:
-            draw = ImageDraw.Draw(content_image)
-            demo_bbox = draw.textbbox((0, 0), "DEMO MODE", font=self.font_type_pills)
-            draw.text((W - (demo_bbox[2] - demo_bbox[0]) - M, H - 30), "DEMO MODE", font=self.font_type_pills, fill=BLACK)
+        # Hard-edged text: the panels have no greys, so smoothed edges would only be dithered into speckle
+        content_image = picolay_render(tree, W, H, antialias=False)
+        logging.info(f"Pokemon display: No. {pokemon['id']:03d} '{pokemon_name}', content {W}x{H}, scale {scale:.2f}")
 
         if not color:
-            # 1-bit panels: text is already hard-edged (antialias=False); threshold the rest
+            # 1-bit panels: threshold whatever is not already black or white
             content_image = content_image.convert('L').point(lambda p: 255 if p >= 128 else 0, mode='1')
 
         if inset_pixels > 0:
