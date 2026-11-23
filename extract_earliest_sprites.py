@@ -2,7 +2,9 @@
 """
 Pokemon Sprite Extractor - Extract Earliest Game Sprites
 Extract sprites for Pokemon 1-1025 using the earliest possible sprite version from each Pokemon's debut game.
-Resizes all sprites to match Pokemon Home dimensions (96x96 pixels).
+Sprites are copied byte for byte at their native resolution: resampling pixel art
+blurs it, and the display scales each sprite by a whole number itself. Where a
+folder only has an animated GIF, its first frame is saved as the PNG.
 
 Also extracts the shiny variant of every sprite into earliest_pokemon_sprites_shiny/.
 Shiny sprites follow the same "earliest generation" rule as the regular ones, with
@@ -21,16 +23,6 @@ import os
 import sys
 import shutil
 from pathlib import Path
-
-# Try to import PIL, but handle gracefully if not available
-try:
-    from PIL import Image
-    HAS_PIL = True
-    print("✓ PIL/Pillow found - will resize sprites to 96x96")
-except ImportError:
-    HAS_PIL = False
-    print("⚠ PIL/Pillow not found - will copy original sprites without resizing")
-    print("To install: pip3 install --user --break-system-packages Pillow")
 
 # Pokemon generation data - which Pokemon debuted in which generation
 POKEMON_GENERATIONS = {
@@ -74,11 +66,13 @@ GENERATION_PATHS = {
         "sprites/sprites/sprites/pokemon/versions/generation-vi/omegaruby-alphasapphire"
     ],
     7: [
-        "sprites/sprites/sprites/pokemon/versions/generation-vii/ultra-sun-ultra-moon",
-        "sprites/sprites/sprites/pokemon/versions/generation-vii/icons"
+        # Animated GIFs upstream; anything missing falls back to Pokemon Home,
+        # not to the 40x30 box icons
+        "sprites/sprites/sprites/pokemon/versions/generation-vii/ultra-sun-ultra-moon"
     ],
     8: [
-        "sprites/sprites/sprites/pokemon/versions/generation-viii/icons"
+        # Sword/Shield have no 2D battle sprites: Gen VIII uses the Pokemon Home sprite
+        "sprites/sprites/sprites/pokemon"  # Pokemon Home fallback
     ],
     9: [
         # Gen IX Pokemon will fallback to Pokemon Home sprites
@@ -103,6 +97,26 @@ SHINY_EXTRA_PATHS = {
     1: ["sprites/sprites/sprites/pokemon/versions/generation-ii/gold"],
 }
 
+def _sprite_in(folder, pokemon_id):
+    """The sprite file for a Pokemon in a folder (PNG preferred, else GIF), or None."""
+    for extension in ("png", "gif"):
+        sprite_file = os.path.join(folder, f"{pokemon_id}.{extension}")
+        if os.path.exists(sprite_file):
+            return sprite_file
+    return None
+
+
+def save_sprite(sprite_path, output_path):
+    """Copy a PNG unchanged; save the first frame of an animated GIF as a PNG."""
+    if sprite_path.lower().endswith(".gif"):
+        from PIL import Image
+        with Image.open(sprite_path) as animation:
+            animation.seek(0)
+            animation.convert("RGBA").save(output_path, "PNG", optimize=True)
+    else:
+        shutil.copy2(sprite_path, output_path)
+
+
 def get_pokemon_generation(pokemon_id):
     """Determine which generation a Pokemon belongs to."""
     for gen, pokemon_list in POKEMON_GENERATIONS.items():
@@ -117,8 +131,8 @@ def find_earliest_sprite(pokemon_id):
     # Check generation-specific paths first
     if generation in GENERATION_PATHS:
         for sprite_path in GENERATION_PATHS[generation]:
-            sprite_file = os.path.join(_rebase(sprite_path), f"{pokemon_id}.png")
-            if os.path.exists(sprite_file):
+            sprite_file = _sprite_in(_rebase(sprite_path), pokemon_id)
+            if sprite_file:
                 return sprite_file, f"Gen {generation} ({os.path.basename(sprite_path)})"
     
     # Fallback to Pokemon Home sprites
@@ -137,8 +151,8 @@ def find_earliest_shiny_sprite(pokemon_id):
     generation = get_pokemon_generation(pokemon_id)
 
     for sprite_path in GENERATION_PATHS.get(generation, []) + SHINY_EXTRA_PATHS.get(generation, []):
-        sprite_file = os.path.join(_rebase(sprite_path), "shiny", f"{pokemon_id}.png")
-        if os.path.exists(sprite_file):
+        sprite_file = _sprite_in(os.path.join(_rebase(sprite_path), "shiny"), pokemon_id)
+        if sprite_file:
             return sprite_file, f"Gen {generation} shiny ({os.path.basename(sprite_path)})"
 
     home_sprite = f"{SPRITES_BASE}/shiny/{pokemon_id}.png"
@@ -146,40 +160,6 @@ def find_earliest_shiny_sprite(pokemon_id):
         return home_sprite, "Pokemon Home shiny (fallback)"
 
     return None, "Not found"
-
-def resize_sprite(input_path, output_path, target_size=(96, 96)):
-    """Resize sprite to target dimensions using PIL with crispy pixel-perfect scaling."""
-    if not HAS_PIL:
-        # If PIL not available, just copy the file
-        shutil.copy2(input_path, output_path)
-        return False
-    
-    try:
-        with Image.open(input_path) as img:
-            # Convert to RGBA to handle transparency
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
-            
-            original_size = img.size
-            
-            # For pixel art (small sprites), use nearest neighbor for crispy scaling
-            # This preserves the pixelated retro look without blurring
-            if original_size[0] <= 64 or original_size[1] <= 64:
-                # Use NEAREST neighbor for pixel-perfect crispy scaling
-                resized = img.resize(target_size, Image.Resampling.NEAREST)
-                print(f"  📐 Crispy scaling: {original_size} → {target_size} (nearest-neighbor)")
-            else:
-                # For larger sprites, use high-quality resampling
-                resized = img.resize(target_size, Image.Resampling.LANCZOS)
-                print(f"  📐 Smooth scaling: {original_size} → {target_size} (lanczos)")
-            
-            resized.save(output_path, 'PNG', optimize=True)
-            return True
-    except Exception as e:
-        print(f"Error resizing {input_path}: {e}")
-        # Fallback to copy if resize fails
-        shutil.copy2(input_path, output_path)
-        return False
 
 def extract_all(find_fn, output_dir, label):
     """Extract sprites for Pokemon 1-1025 using find_fn to locate each source file."""
@@ -190,14 +170,12 @@ def extract_all(find_fn, output_dir, label):
     
     print(f"🎯 Extracting earliest {label} sprites for Pokemon #1-1025")
     print(f"📁 Output directory: {output_dir.absolute()}")
-    print(f"🎨 Target size: 96x96 pixels (Pokemon Home standard)")
+    print("🎨 Sprites are copied unchanged, at native resolution")
     print()
     
     # Statistics
     found = 0
     not_found = 0
-    resized_count = 0
-    copied_count = 0
     
     # Track which sources we're using
     source_stats = {}
@@ -212,13 +190,8 @@ def extract_all(find_fn, output_dir, label):
             # Track source statistics
             source_stats[source] = source_stats.get(source, 0) + 1
             
-            # Resize/copy the sprite
-            was_resized = resize_sprite(sprite_path, str(output_path))
-            if was_resized:
-                resized_count += 1
-            else:
-                copied_count += 1
-                
+            save_sprite(sprite_path, str(output_path))
+
             # Progress indicator
             if pokemon_id % 100 == 0 or pokemon_id <= 10:
                 print(f"✓ #{pokemon_id:04d}: {source}")
@@ -234,13 +207,7 @@ def extract_all(find_fn, output_dir, label):
     print(f"Total Pokemon processed: 1025")
     print(f"Sprites found: {found}")
     print(f"Sprites not found: {not_found}")
-    
-    if HAS_PIL:
-        print(f"Sprites resized to 96x96: {resized_count}")
-        print(f"Sprites copied without resize: {copied_count}")
-    else:
-        print(f"Sprites copied (no resizing): {found}")
-    
+
     print()
     print("SOURCE BREAKDOWN:")
     print("-" * 40)
@@ -249,10 +216,6 @@ def extract_all(find_fn, output_dir, label):
     
     print()
     print(f"✅ Extraction complete! Sprites saved to: {output_dir.absolute()}")
-    
-    if not HAS_PIL:
-        print("\n💡 To enable sprite resizing, install PIL:")
-        print("pip3 install --user --break-system-packages Pillow")
 
 def main():
     global SPRITES_BASE
