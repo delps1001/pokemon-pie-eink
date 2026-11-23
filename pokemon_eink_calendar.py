@@ -11,7 +11,7 @@ import time
 import json
 import logging
 from datetime import datetime, timedelta
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance
 import argparse
 from pathlib import Path
 import schedule
@@ -726,10 +726,14 @@ class PokemonEInkCalendar:
             sprite = Image.open(sprite_path)
             if sprite.mode != 'RGBA' and (sprite.mode in ('P', 'LA') or 'transparency' in sprite.info):
                 sprite = sprite.convert('RGBA')
-            if sprite.mode == 'RGBA':
+            if sprite.mode == 'RGBA' and sprite.getchannel('A').getextrema()[0] < 255:
                 art = sprite.getchannel('A').getbbox()
-                if art:
-                    sprite = sprite.crop(art)
+            else:
+                # No transparency (Gen 1 and 2 sprites): the margin is plain white instead
+                rgb = sprite.convert('RGB')
+                art = ImageChops.difference(rgb, Image.new('RGB', rgb.size, WHITE)).getbbox()
+            if art:
+                sprite = sprite.crop(art)
             sprite.load()
             return sprite
         except Exception as e:

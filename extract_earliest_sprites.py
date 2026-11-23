@@ -71,7 +71,8 @@ GENERATION_PATHS = {
         "sprites/sprites/sprites/pokemon/versions/generation-vii/ultra-sun-ultra-moon"
     ],
     8: [
-        "sprites/sprites/sprites/pokemon/versions/generation-viii/icons"
+        # Sword/Shield have no 2D battle sprites: Gen VIII uses the Pokemon Home sprite
+        "sprites/sprites/sprites/pokemon"  # Pokemon Home fallback
     ],
     9: [
         # Gen IX Pokemon will fallback to Pokemon Home sprites
