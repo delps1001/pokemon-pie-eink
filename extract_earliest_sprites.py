@@ -3,7 +3,8 @@
 Pokemon Sprite Extractor - Extract Earliest Game Sprites
 Extract sprites for Pokemon 1-1025 using the earliest possible sprite version from each Pokemon's debut game.
 Sprites are copied byte for byte at their native resolution: resampling pixel art
-blurs it, and the display scales each sprite by a whole number itself.
+blurs it, and the display scales each sprite by a whole number itself. Where a
+folder only has an animated GIF, its first frame is saved as the PNG.
 
 Also extracts the shiny variant of every sprite into earliest_pokemon_sprites_shiny/.
 Shiny sprites follow the same "earliest generation" rule as the regular ones, with
@@ -65,8 +66,9 @@ GENERATION_PATHS = {
         "sprites/sprites/sprites/pokemon/versions/generation-vi/omegaruby-alphasapphire"
     ],
     7: [
-        "sprites/sprites/sprites/pokemon/versions/generation-vii/ultra-sun-ultra-moon",
-        "sprites/sprites/sprites/pokemon/versions/generation-vii/icons"
+        # Animated GIFs upstream; anything missing falls back to Pokemon Home,
+        # not to the 40x30 box icons
+        "sprites/sprites/sprites/pokemon/versions/generation-vii/ultra-sun-ultra-moon"
     ],
     8: [
         "sprites/sprites/sprites/pokemon/versions/generation-viii/icons"
@@ -94,6 +96,26 @@ SHINY_EXTRA_PATHS = {
     1: ["sprites/sprites/sprites/pokemon/versions/generation-ii/gold"],
 }
 
+def _sprite_in(folder, pokemon_id):
+    """The sprite file for a Pokemon in a folder (PNG preferred, else GIF), or None."""
+    for extension in ("png", "gif"):
+        sprite_file = os.path.join(folder, f"{pokemon_id}.{extension}")
+        if os.path.exists(sprite_file):
+            return sprite_file
+    return None
+
+
+def save_sprite(sprite_path, output_path):
+    """Copy a PNG unchanged; save the first frame of an animated GIF as a PNG."""
+    if sprite_path.lower().endswith(".gif"):
+        from PIL import Image
+        with Image.open(sprite_path) as animation:
+            animation.seek(0)
+            animation.convert("RGBA").save(output_path, "PNG", optimize=True)
+    else:
+        shutil.copy2(sprite_path, output_path)
+
+
 def get_pokemon_generation(pokemon_id):
     """Determine which generation a Pokemon belongs to."""
     for gen, pokemon_list in POKEMON_GENERATIONS.items():
@@ -108,8 +130,8 @@ def find_earliest_sprite(pokemon_id):
     # Check generation-specific paths first
     if generation in GENERATION_PATHS:
         for sprite_path in GENERATION_PATHS[generation]:
-            sprite_file = os.path.join(_rebase(sprite_path), f"{pokemon_id}.png")
-            if os.path.exists(sprite_file):
+            sprite_file = _sprite_in(_rebase(sprite_path), pokemon_id)
+            if sprite_file:
                 return sprite_file, f"Gen {generation} ({os.path.basename(sprite_path)})"
     
     # Fallback to Pokemon Home sprites
@@ -128,8 +150,8 @@ def find_earliest_shiny_sprite(pokemon_id):
     generation = get_pokemon_generation(pokemon_id)
 
     for sprite_path in GENERATION_PATHS.get(generation, []) + SHINY_EXTRA_PATHS.get(generation, []):
-        sprite_file = os.path.join(_rebase(sprite_path), "shiny", f"{pokemon_id}.png")
-        if os.path.exists(sprite_file):
+        sprite_file = _sprite_in(os.path.join(_rebase(sprite_path), "shiny"), pokemon_id)
+        if sprite_file:
             return sprite_file, f"Gen {generation} shiny ({os.path.basename(sprite_path)})"
 
     home_sprite = f"{SPRITES_BASE}/shiny/{pokemon_id}.png"
@@ -167,7 +189,7 @@ def extract_all(find_fn, output_dir, label):
             # Track source statistics
             source_stats[source] = source_stats.get(source, 0) + 1
             
-            shutil.copy2(sprite_path, output_path)
+            save_sprite(sprite_path, str(output_path))
 
             # Progress indicator
             if pokemon_id % 100 == 0 or pokemon_id <= 10:
