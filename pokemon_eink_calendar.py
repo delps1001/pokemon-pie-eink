@@ -871,6 +871,7 @@ class PokemonEInkCalendar:
             return max(1, round(pixels * scale))
 
         pad, column_gap = u(20), u(26)
+        sprite_margin = u(5)                               # breathing room left of the sprite
         column_height = H - 2 * pad                        # the text column; the sprite may use all of H
         sprite_column = min(column_height, int(W * 0.46))  # the sprite column is never narrower than this
         min_info_width = u(208)                            # nor does it leave the text less than this
@@ -972,7 +973,7 @@ class PokemonEInkCalendar:
             return node, sizes
 
         def info_width_beside(column):
-            return W - pad - column_gap - column
+            return W - sprite_margin - pad - column_gap - column
 
         # The sprite takes the largest whole-number scale the frame allows, as long as the text
         # beside it is not cut off and stays readable. The text always wins: a sprite that would
@@ -1014,7 +1015,7 @@ class PokemonEInkCalendar:
         info = info_column(info_width_beside(column))[0]
 
         tree = Box(
-            style=Style(width=W, height=H, padding=(0, pad, 0, 0), gap=column_gap, align_items='center'),
+            style=Style(width=W, height=H, padding=(0, pad, 0, sprite_margin), gap=column_gap, align_items='center'),
             children=[sprite_node, info],
         )
         # Hard-edged text: the panels have no greys, so smoothed edges would only be dithered into speckle
