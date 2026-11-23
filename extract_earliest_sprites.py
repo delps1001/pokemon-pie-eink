@@ -2,7 +2,8 @@
 """
 Pokemon Sprite Extractor - Extract Earliest Game Sprites
 Extract sprites for Pokemon 1-1025 using the earliest possible sprite version from each Pokemon's debut game.
-Resizes all sprites to match Pokemon Home dimensions (96x96 pixels).
+Sprites are copied byte for byte at their native resolution: resampling pixel art
+blurs it, and the display scales each sprite by a whole number itself.
 
 Also extracts the shiny variant of every sprite into earliest_pokemon_sprites_shiny/.
 Shiny sprites follow the same "earliest generation" rule as the regular ones, with
@@ -21,16 +22,6 @@ import os
 import sys
 import shutil
 from pathlib import Path
-
-# Try to import PIL, but handle gracefully if not available
-try:
-    from PIL import Image
-    HAS_PIL = True
-    print("✓ PIL/Pillow found - will resize sprites to 96x96")
-except ImportError:
-    HAS_PIL = False
-    print("⚠ PIL/Pillow not found - will copy original sprites without resizing")
-    print("To install: pip3 install --user --break-system-packages Pillow")
 
 # Pokemon generation data - which Pokemon debuted in which generation
 POKEMON_GENERATIONS = {
@@ -147,40 +138,6 @@ def find_earliest_shiny_sprite(pokemon_id):
 
     return None, "Not found"
 
-def resize_sprite(input_path, output_path, target_size=(96, 96)):
-    """Resize sprite to target dimensions using PIL with crispy pixel-perfect scaling."""
-    if not HAS_PIL:
-        # If PIL not available, just copy the file
-        shutil.copy2(input_path, output_path)
-        return False
-    
-    try:
-        with Image.open(input_path) as img:
-            # Convert to RGBA to handle transparency
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
-            
-            original_size = img.size
-            
-            # For pixel art (small sprites), use nearest neighbor for crispy scaling
-            # This preserves the pixelated retro look without blurring
-            if original_size[0] <= 64 or original_size[1] <= 64:
-                # Use NEAREST neighbor for pixel-perfect crispy scaling
-                resized = img.resize(target_size, Image.Resampling.NEAREST)
-                print(f"  📐 Crispy scaling: {original_size} → {target_size} (nearest-neighbor)")
-            else:
-                # For larger sprites, use high-quality resampling
-                resized = img.resize(target_size, Image.Resampling.LANCZOS)
-                print(f"  📐 Smooth scaling: {original_size} → {target_size} (lanczos)")
-            
-            resized.save(output_path, 'PNG', optimize=True)
-            return True
-    except Exception as e:
-        print(f"Error resizing {input_path}: {e}")
-        # Fallback to copy if resize fails
-        shutil.copy2(input_path, output_path)
-        return False
-
 def extract_all(find_fn, output_dir, label):
     """Extract sprites for Pokemon 1-1025 using find_fn to locate each source file."""
     
@@ -190,14 +147,12 @@ def extract_all(find_fn, output_dir, label):
     
     print(f"🎯 Extracting earliest {label} sprites for Pokemon #1-1025")
     print(f"📁 Output directory: {output_dir.absolute()}")
-    print(f"🎨 Target size: 96x96 pixels (Pokemon Home standard)")
+    print("🎨 Sprites are copied unchanged, at native resolution")
     print()
     
     # Statistics
     found = 0
     not_found = 0
-    resized_count = 0
-    copied_count = 0
     
     # Track which sources we're using
     source_stats = {}
@@ -212,13 +167,8 @@ def extract_all(find_fn, output_dir, label):
             # Track source statistics
             source_stats[source] = source_stats.get(source, 0) + 1
             
-            # Resize/copy the sprite
-            was_resized = resize_sprite(sprite_path, str(output_path))
-            if was_resized:
-                resized_count += 1
-            else:
-                copied_count += 1
-                
+            shutil.copy2(sprite_path, output_path)
+
             # Progress indicator
             if pokemon_id % 100 == 0 or pokemon_id <= 10:
                 print(f"✓ #{pokemon_id:04d}: {source}")
@@ -234,13 +184,7 @@ def extract_all(find_fn, output_dir, label):
     print(f"Total Pokemon processed: 1025")
     print(f"Sprites found: {found}")
     print(f"Sprites not found: {not_found}")
-    
-    if HAS_PIL:
-        print(f"Sprites resized to 96x96: {resized_count}")
-        print(f"Sprites copied without resize: {copied_count}")
-    else:
-        print(f"Sprites copied (no resizing): {found}")
-    
+
     print()
     print("SOURCE BREAKDOWN:")
     print("-" * 40)
@@ -249,10 +193,6 @@ def extract_all(find_fn, output_dir, label):
     
     print()
     print(f"✅ Extraction complete! Sprites saved to: {output_dir.absolute()}")
-    
-    if not HAS_PIL:
-        print("\n💡 To enable sprite resizing, install PIL:")
-        print("pip3 install --user --break-system-packages Pillow")
 
 def main():
     global SPRITES_BASE

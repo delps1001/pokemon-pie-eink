@@ -723,7 +723,6 @@ class PokemonEInkCalendar:
             return None
         try:
             sprite = Image.open(sprite_path)
-            pixel_art = sprite.width <= 96 and sprite.height <= 96
             # Trim the transparent margin, so the art (not its canvas) fills the box
             if sprite.mode != 'RGBA' and (sprite.mode in ('P', 'LA') or 'transparency' in sprite.info):
                 sprite = sprite.convert('RGBA')
@@ -732,11 +731,12 @@ class PokemonEInkCalendar:
                 if art:
                     sprite = sprite.crop(art)
             scale = min(box_width / sprite.width, box_height / sprite.height)
-            if pixel_art:
+            if scale >= 1:
                 # Whole-number nearest-neighbour scaling keeps every sprite pixel the same size
-                scale = max(1, int(scale))
+                scale = int(scale)
                 resample = Image.Resampling.NEAREST
             else:
+                # Larger than the box: it has to shrink, which cannot be done pixel-perfectly
                 resample = Image.Resampling.LANCZOS
             new_size = (max(1, int(sprite.width * scale)), max(1, int(sprite.height * scale)))
             logging.info(f"Sprite scaling: art {sprite.width}x{sprite.height}, box {box_width}x{box_height}, "
