@@ -869,7 +869,7 @@ class PokemonEInkCalendar:
         pad, column_gap = u(20), u(26)
         column_height = H - 2 * pad                        # the text column; the sprite may use all of H
         sprite_column = min(column_height, int(W * 0.46))  # the sprite column is never narrower than this
-        min_info_width = u(246)                            # nor does it leave the text less than this
+        min_info_width = u(208)                            # nor does it leave the text less than this
 
         pokemon = self.get_current_pokemon()
         shiny_today = self.is_shiny(pokemon)
@@ -984,7 +984,7 @@ class PokemonEInkCalendar:
                 scales = list(range(most, int(base_fit) - 1, -1))
             base = info_fits(info_width_beside(sprite_column))
             # Text may shrink to make room, but not below these sizes (or what it would be anyway)
-            floors = {True: u(30), False: u(15)}
+            floors = {True: u(25), False: u(12)}
             if base:
                 floors = {key: min(floors[key], size) for key, size in base[1].items()}
             for sprite_scale in scales:
