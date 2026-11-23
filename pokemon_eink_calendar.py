@@ -37,6 +37,7 @@ except ImportError:
 from color_mapping import SevenColorMapper
 from picolay import Box, Img, Style, Text, compute_layout
 from picolay import render as picolay_render
+from picolay.text import font_for, line_pitch, measuring, text_width
 
 # Where to look for fonts, and the (regular, bold) pairs to look for, in order of preference
 FONT_DIRS = [
@@ -717,36 +718,64 @@ class PokemonEInkCalendar:
                 actual_index = min(start_index + days_since_start, len(self.pokemon_data) - 1)
                 return self.pokemon_data[actual_index]
 
-    def load_display_sprite(self, sprite_path, box_width, box_height):
-        """Load a sprite trimmed, scaled to fit the box and processed for e-ink, or None"""
+    def load_sprite_art(self, sprite_path):
+        """Load a sprite with its transparent margin trimmed (so the art, not its canvas, is sized), or None"""
         if not sprite_path or not os.path.exists(sprite_path):
             return None
         try:
             sprite = Image.open(sprite_path)
-            # Trim the transparent margin, so the art (not its canvas) fills the box
             if sprite.mode != 'RGBA' and (sprite.mode in ('P', 'LA') or 'transparency' in sprite.info):
                 sprite = sprite.convert('RGBA')
             if sprite.mode == 'RGBA':
                 art = sprite.getchannel('A').getbbox()
                 if art:
                     sprite = sprite.crop(art)
-            scale = min(box_width / sprite.width, box_height / sprite.height)
-            if scale >= 1:
-                # Whole-number nearest-neighbour scaling keeps every sprite pixel the same size
-                scale = int(scale)
-                resample = Image.Resampling.NEAREST
-            else:
-                # Larger than the box: it has to shrink, which cannot be done pixel-perfectly
-                resample = Image.Resampling.LANCZOS
-            new_size = (max(1, int(sprite.width * scale)), max(1, int(sprite.height * scale)))
-            logging.info(f"Sprite scaling: art {sprite.width}x{sprite.height}, box {box_width}x{box_height}, "
-                         f"scale {scale:.3f}, final {new_size[0]}x{new_size[1]}")
-            sprite = sprite.resize(new_size, resample)
-            # Dither after scaling, so the e-ink pattern is at display resolution
-            return self.enhance_sprite_for_eink(sprite)
+            sprite.load()
+            return sprite
         except Exception as e:
             logging.warning(f"Failed to load sprite {sprite_path}: {e}")
             return None
+
+    def scale_sprite_for_display(self, art, scale):
+        """Scale sprite art and process it for e-ink, or None.
+
+        Whole-number scales use nearest-neighbour, which keeps every sprite pixel the same
+        size. Anything else is art that has to shrink, which cannot be done pixel-perfectly.
+        """
+        try:
+            resample = Image.Resampling.NEAREST if scale == int(scale) else Image.Resampling.LANCZOS
+            new_size = (max(1, int(art.width * scale)), max(1, int(art.height * scale)))
+            logging.info(f"Sprite scaling: art {art.width}x{art.height}, scale {scale:.3f}, "
+                         f"final {new_size[0]}x{new_size[1]}")
+            # Dither after scaling, so the e-ink pattern is at display resolution
+            return self.enhance_sprite_for_eink(art.resize(new_size, resample))
+        except Exception as e:
+            logging.warning(f"Failed to scale sprite: {e}")
+            return None
+
+    @staticmethod
+    def text_cut_off(layout):
+        """True if any text in a computed layout would be drawn clipped.
+
+        picolay shrinks text to fit, but stops at min_font_size and clips what is left over.
+        """
+        def cut(box):
+            node, style = box.node, box.node.style
+            if isinstance(node, Text) and node.content:
+                size = box.resolved_font_size or style.font_size
+                width = box.width - style.h_padding - style.h_border + 0.5
+                font = font_for(style, size)
+                if box.lines is not None:
+                    height = box.height - style.v_padding - style.v_border + 0.5
+                    if len(box.lines) * line_pitch(style, size) > height:
+                        return True
+                    if any(text_width(font, line) > width for line in box.lines):
+                        return True
+                elif text_width(font, node.content) > width:
+                    return True
+            return any(cut(child) for child in box.children)
+        with measuring(False):
+            return cut(layout)
 
     @staticmethod
     def sparkle_image(r, fill, outline):
@@ -779,6 +808,31 @@ class PokemonEInkCalendar:
                         padding=(round(font_size * 0.3), round(font_size * 0.6))),
             children=[Text(label, style=Style(font_size=font_size, font_color=ink, font_path=self.font_bold))],
         )
+
+    @staticmethod
+    def rows_overflow(layout):
+        """True if a row, or a column of fixed height, in a computed layout holds more than fits in it"""
+        def over(box):
+            style = box.node.style
+            if isinstance(box.node, Box) and box.children:
+                row = style.flex_direction != 'column'
+                gaps = style.gap * (len(box.children) - 1)
+                if row:
+                    need = sum(c.width + c.node.style.margin_left + c.node.style.margin_right for c in box.children)
+                    room = box.width - style.h_padding - style.h_border
+                elif isinstance(style.height, (int, float)):
+                    need = sum(c.height + c.node.style.margin_top + c.node.style.margin_bottom for c in box.children)
+                    room = box.height - style.v_padding - style.v_border
+                else:
+                    need = room = gaps = 0  # a column sized to its content cannot overflow itself
+                if need + gaps > room + 0.5:
+                    return True
+            return any(over(child) for child in box.children)
+        return over(layout)
+
+    def display_date(self):
+        """The date shown on the frame"""
+        return datetime.now()
 
     def create_display_image(self):
         """Create the e-ink display image: the sprite on the left; a calendar-leaf date,
@@ -813,9 +867,9 @@ class PokemonEInkCalendar:
             return max(1, round(pixels * scale))
 
         pad, column_gap = u(20), u(26)
-        column_height = H - 2 * pad
-        sprite_width = min(column_height, int(W * 0.46))
-        info_width = W - 2 * pad - column_gap - sprite_width
+        column_height = H - 2 * pad                        # the text column; the sprite may use all of H
+        sprite_column = min(column_height, int(W * 0.46))  # the sprite column is never narrower than this
+        min_info_width = u(246)                            # nor does it leave the text less than this
 
         pokemon = self.get_current_pokemon()
         shiny_today = self.is_shiny(pokemon)
@@ -832,84 +886,137 @@ class PokemonEInkCalendar:
         if shiny_today:
             sprite_path = pokemon['local_shiny_sprite']
             logging.info(f"✨ Shiny {pokemon['name']} today!")
-        sprite = self.load_display_sprite(sprite_path, sprite_width, column_height)
-        if sprite is not None:
-            # Already scaled and dithered: place it at natural size, never resampled
-            sprite_node = Img(sprite, style=Style(width=sprite_width, height=column_height, object_fit='none'))
-        else:
-            placeholder = min(sprite_width, column_height) - u(80)
+        art = self.load_sprite_art(sprite_path)
+
+        def info_column(info_width):
+            """(node, name, entry): the text column at a width, and its two shrinkable texts"""
+            # Date: the day of the month on a calendar leaf, beside the weekday and the month and year
+            now = self.display_date()
+            leaf = u(58)
+            date_children = [
+                Box(style=Style(width=leaf, height=leaf, background=accent, justify_content='center', align_items='center'),
+                    children=[Text(str(now.day), style=Style(font_size=u(34), font_color=on_accent, font_path=bold))]),
+                Box(style=Style(flex_grow=1, height='fit', flex_direction='column', gap=u(9)),
+                    children=[
+                        Text(now.strftime("%A"), style=Style(font_size=u(27), font_path=bold, font_shrink=True,
+                                                             min_font_size=u(16))),
+                        Text(now.strftime("%B %Y"), style=Style(font_size=u(17), font_path=regular)),
+                    ]),
+            ]
+            date_row = Box(style=Style(height='fit', align_items='center', gap=u(14)), children=date_children)
+            rule = Box(style=Style(height=max(2, u(2)), background=BLACK))
+
+            # Dex number (and a sparkle when shiny) over the name, which shrinks to fit
+            pokemon_name = pokemon.get('name', f"Pokemon #{pokemon['id']:03d}")
+            number_children = [Text(f"No. {pokemon['id']:03d}",
+                                    style=Style(font_size=u(15), font_color=accent_ink, font_path=bold))]
+            if shiny_today:
+                number_children += [
+                    Img(self.sparkle_image(u(7), YELLOW, BLACK)),
+                    Text("SHINY", style=Style(font_size=u(15), font_path=bold)),
+                ]
+            if self.demo_mode:
+                number_children += [Box(style=Style(flex_grow=1, height=1)), self.chip("DEMO MODE", WHITE, BLACK, u(10))]
+            name_text = Text(pokemon_name, style=Style(font_size=u(44), min_font_size=u(20), font_shrink=True,
+                                                       font_path=bold, margin=(u(9), 0, 0, 0)))
+            entry_children = [
+                Box(style=Style(height='fit', align_items='center', gap=u(6)), children=number_children),
+                name_text,
+            ]
+            if types:
+                entry_children.append(Box(
+                    style=Style(height='fit', gap=u(8), margin=(u(12), 0, 0, 0)),
+                    children=[self.chip(t.upper(), *self.type_colors(t), u(13)) for t in types],
+                ))
+            entry = Box(style=Style(height='fit', flex_direction='column'), children=entry_children)
+
+            section_gap = u(15)
+            heading = Box(style=Style(height='fit', flex_direction='column', gap=section_gap),
+                          children=[date_row, rule, entry])
+            info_children = [heading]
+
+            # Pokedex entry: wrapped, and shrunk (never truncated) to what is left of the column
+            pokedex_text = get_pokedex_description(pokemon['id']) if pokemon.get('id') else None
+            entry_text = None
+            if pokedex_text:
+                heading_height = compute_layout(heading, info_width, column_height, antialias=False).height
+                entry_text = Text(pokedex_text, style=Style(
+                    wrap=True, font_shrink=True, font_size=u(19), min_font_size=8, line_spacing=u(6), font_path=regular,
+                    max_height=max(2, int(column_height - heading_height - section_gap))))
+                info_children.append(entry_text)
+            node = Box(style=Style(width=info_width, height=column_height, flex_direction='column',
+                                   justify_content='center', gap=section_gap),
+                       children=info_children)
+            return node, name_text, entry_text
+
+        def info_fits(info_width, floors=None):
+            """(node, sizes) if no text is cut off at this width and none is below its floor, else None"""
+            node, name_text, entry_text = info_column(info_width)
+            layout = compute_layout(node, info_width, column_height, antialias=False)
+            if self.text_cut_off(layout) or self.rows_overflow(layout):
+                return None
+            sizes = {}
+
+            def collect(box):
+                if box.node is name_text or box.node is entry_text:
+                    sizes[box.node is name_text] = box.resolved_font_size or box.node.style.font_size
+                for child in box.children:
+                    collect(child)
+            collect(layout)
+            if floors and any(sizes[key] < floors[key] for key in sizes):
+                return None
+            return node, sizes
+
+        def info_width_beside(column):
+            return W - pad - column_gap - column
+
+        # The sprite takes the largest whole-number scale the frame allows, as long as the text
+        # beside it is not cut off and stays readable. The text always wins: a sprite that would
+        # squeeze it steps down a scale.
+        sprite_node, column, info, sprite_scale = None, sprite_column, None, None
+        if art is not None:
+            base_fit = min(sprite_column / art.width, H / art.height)
+            if base_fit < 1:
+                scales = [base_fit]  # larger than the column: it can only shrink
+            else:
+                most = int(min(info_width_beside(0) - min_info_width, W) / art.width)
+                most = max(int(base_fit), min(most, int(H / art.height)))
+                scales = list(range(most, int(base_fit) - 1, -1))
+            base = info_fits(info_width_beside(sprite_column))
+            # Text may shrink to make room, but not below these sizes (or what it would be anyway)
+            floors = {True: u(30), False: u(15)}
+            if base:
+                floors = {key: min(floors[key], size) for key, size in base[1].items()}
+            for sprite_scale in scales:
+                column = max(sprite_column, int(art.width * sprite_scale))
+                fitted = info_fits(info_width_beside(column), floors)
+                if fitted or sprite_scale == scales[-1]:
+                    break
+            sprite = self.scale_sprite_for_display(art, sprite_scale)
+            if sprite is not None:
+                # Already scaled and dithered: place it at natural size, never resampled
+                sprite_node = Img(sprite, style=Style(width=column, height=H, object_fit='none'))
+        if sprite_node is None:
+            column = sprite_column
+            placeholder = min(sprite_column, column_height) - u(80)
             sprite_node = Box(
-                style=Style(width=sprite_width, height=column_height, justify_content='center', align_items='center'),
+                style=Style(width=column, height=H, justify_content='center', align_items='center'),
                 children=[Box(
                     style=Style(width=placeholder, height=placeholder, border=(3, BLACK),
                                 justify_content='center', align_items='center'),
                     children=[Text("No Sprite", style=Style(font_size=u(20), font_path=regular))],
                 )],
             )
-
-        # Date: the day of the month on a calendar leaf, beside the weekday and the month and year
-        now = datetime.now()
-        leaf = u(58)
-        date_children = [
-            Box(style=Style(width=leaf, height=leaf, background=accent, justify_content='center', align_items='center'),
-                children=[Text(str(now.day), style=Style(font_size=u(34), font_color=on_accent, font_path=bold))]),
-            Box(style=Style(flex_grow=1, height='fit', flex_direction='column', gap=u(9)),
-                children=[
-                    Text(now.strftime("%A"), style=Style(font_size=u(27), font_path=bold, font_shrink=True,
-                                                         min_font_size=u(16))),
-                    Text(now.strftime("%B %Y"), style=Style(font_size=u(17), font_path=regular)),
-                ]),
-        ]
-        date_row = Box(style=Style(height='fit', align_items='center', gap=u(14)), children=date_children)
-        rule = Box(style=Style(height=max(2, u(2)), background=BLACK))
-
-        # Dex number (and a sparkle when shiny) over the name, which shrinks to fit
-        pokemon_name = pokemon.get('name', f"Pokemon #{pokemon['id']:03d}")
-        number_children = [Text(f"No. {pokemon['id']:03d}",
-                                style=Style(font_size=u(15), font_color=accent_ink, font_path=bold))]
-        if shiny_today:
-            number_children += [
-                Img(self.sparkle_image(u(7), YELLOW, BLACK)),
-                Text("SHINY", style=Style(font_size=u(15), font_path=bold)),
-            ]
-        if self.demo_mode:
-            number_children += [Box(style=Style(flex_grow=1, height=1)), self.chip("DEMO MODE", WHITE, BLACK, u(10))]
-        entry_children = [
-            Box(style=Style(height='fit', align_items='center', gap=u(6)), children=number_children),
-            Text(pokemon_name, style=Style(font_size=u(44), min_font_size=u(20), font_shrink=True, font_path=bold,
-                                           margin=(u(9), 0, 0, 0))),
-        ]
-        if types:
-            entry_children.append(Box(
-                style=Style(height='fit', gap=u(8), margin=(u(12), 0, 0, 0)),
-                children=[self.chip(t.upper(), *self.type_colors(t), u(13)) for t in types],
-            ))
-        entry = Box(style=Style(height='fit', flex_direction='column'), children=entry_children)
-
-        section_gap = u(15)
-        heading = Box(style=Style(height='fit', flex_direction='column', gap=section_gap),
-                      children=[date_row, rule, entry])
-        info_children = [heading]
-
-        # Pokedex entry: wrapped, and shrunk (never truncated) to what is left of the column
-        pokedex_text = get_pokedex_description(pokemon['id']) if pokemon.get('id') else None
-        if pokedex_text:
-            heading_height = compute_layout(heading, info_width, column_height, antialias=False).height
-            info_children.append(Text(pokedex_text, style=Style(
-                wrap=True, font_shrink=True, font_size=u(19), min_font_size=8, line_spacing=u(6), font_path=regular,
-                max_height=max(2, int(column_height - heading_height - section_gap)))))
+        info = info_column(info_width_beside(column))[0]
 
         tree = Box(
-            style=Style(width=W, height=H, padding=pad, gap=column_gap),
-            children=[
-                sprite_node,
-                Box(style=Style(flex_grow=1, flex_direction='column', justify_content='center', gap=section_gap),
-                    children=info_children),
-            ],
+            style=Style(width=W, height=H, padding=(0, pad, 0, 0), gap=column_gap, align_items='center'),
+            children=[sprite_node, info],
         )
         # Hard-edged text: the panels have no greys, so smoothed edges would only be dithered into speckle
         content_image = picolay_render(tree, W, H, antialias=False)
-        logging.info(f"Pokemon display: No. {pokemon['id']:03d} '{pokemon_name}', content {W}x{H}, scale {scale:.2f}")
+        logging.info(f"Pokemon display: No. {pokemon['id']:03d} '{pokemon.get('name')}', content {W}x{H}, scale {scale:.2f}, "
+                     f"sprite x{sprite_scale} in a {column}px column, text {info_width_beside(column)}px")
 
         if not color:
             # 1-bit panels: threshold whatever is not already black or white
