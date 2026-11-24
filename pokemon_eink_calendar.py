@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance
 import argparse
+import dataclasses
 from pathlib import Path
 import schedule
 import threading
@@ -56,15 +57,39 @@ FONT_FAMILIES = [
 BLACK, WHITE = (0, 0, 0), (255, 255, 255)
 RED, YELLOW, BLUE, GREEN = (255, 0, 0), (255, 255, 0), (0, 0, 255), (0, 255, 0)
 
-# Type chip colours as (fill, ink). A white fill is drawn as an outline in the ink colour.
+def mix(a, b, share_b=0.5):
+    """A tint the panel cannot show solid: inks a and b in a fixed ordered-dither pattern,
+    with share_b of the pixels in b (quarters: 0.25, 0.5 or 0.75)"""
+    return ('mix', a, b, share_b)
+
+
+# Type chips as (fill, ink, border). The fill is a solid ink or a mix() of two; text and border
+# are always solid so the label stays crisp. With only six inks, mixes give every type its own chip.
 TYPE_CHIPS = {
-    "normal": (WHITE, BLACK), "fire": (RED, WHITE), "water": (BLUE, WHITE),
-    "grass": (GREEN, WHITE), "electric": (YELLOW, BLACK), "ice": (WHITE, BLUE),
-    "fighting": (RED, WHITE), "poison": (BLUE, WHITE), "ground": (YELLOW, BLACK),
-    "flying": (WHITE, BLUE), "psychic": (WHITE, RED), "bug": (WHITE, GREEN),
-    "rock": (YELLOW, BLACK), "ghost": (BLUE, WHITE), "dragon": (BLUE, WHITE),
-    "dark": (BLACK, WHITE), "steel": (WHITE, BLACK), "fairy": (WHITE, RED),
+    "normal":   (WHITE, BLACK, BLACK),
+    "fire":     (mix(RED, YELLOW), BLACK, RED),           # orange
+    "water":    (BLUE, WHITE, BLUE),
+    "grass":    (GREEN, BLACK, GREEN),
+    "electric": (YELLOW, BLACK, YELLOW),
+    "ice":      (mix(WHITE, BLUE, 0.25), BLACK, BLUE),    # pale blue
+    "fighting": (RED, WHITE, RED),
+    "poison":   (mix(BLUE, RED), WHITE, BLUE),            # purple
+    "ground":   (mix(YELLOW, RED, 0.25), BLACK, BLACK),   # sandy tan
+    "flying":   (WHITE, BLUE, BLUE),
+    "psychic":  (mix(WHITE, RED), BLACK, RED),            # pink
+    "bug":      (mix(GREEN, YELLOW), BLACK, GREEN),       # lime
+    "rock":     (mix(YELLOW, BLACK, 0.25), BLACK, BLACK), # khaki
+    "ghost":    (mix(BLUE, BLACK), WHITE, BLACK),         # navy
+    "dragon":   (BLUE, YELLOW, YELLOW),
+    "dark":     (BLACK, WHITE, BLACK),
+    "steel":    (mix(WHITE, BLACK, 0.25), BLACK, BLACK),  # light grey
+    "fairy":    (WHITE, RED, RED),
 }
+
+# 4x4 Bayer thresholds: a share of n/16 sets the pixels whose threshold is below n
+BAYER4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]])
+# A colour no chip ink uses, marking the fill area of a chip before it is patterned
+CHIP_FILL_MARK = (1, 2, 3)
 
 # Configure logging
 logging.basicConfig(
@@ -798,20 +823,63 @@ class PokemonEInkCalendar:
         return image
 
     def type_colors(self, type_name):
-        """(fill, ink) of a type's chip; the panel's own solid colours, or black and white"""
-        fill, ink = TYPE_CHIPS.get(str(type_name).lower(), (WHITE, BLACK))
+        """(fill, ink, border) of a type's chip. On the colour panel the fill may be a mix();
+        monochrome panels get white with a black outline, or black with white text."""
+        fill, ink, border = TYPE_CHIPS.get(str(type_name).lower(), (WHITE, BLACK, BLACK))
         if self.color_mode != '7color':
-            fill, ink = (WHITE, BLACK) if fill == WHITE else (BLACK, WHITE)
-        return fill, ink
+            light = ink == BLACK or fill == WHITE
+            return (WHITE, BLACK, BLACK) if light else (BLACK, WHITE, BLACK)
+        return fill, ink, border
 
-    def chip(self, label, fill, ink, font_size):
-        """A small solid label; a white fill gets an outline in the ink colour"""
+    def type_accent(self, type_name):
+        """One solid ink standing for a type, for text highlights"""
+        fill, ink, border = self.type_colors(type_name)
+        if self.is_mix(fill):
+            fill = fill[1] if fill[1] != WHITE else fill[2]  # the mix's main ink
+        accent = fill if fill != WHITE else border
+        return accent
+
+    @staticmethod
+    def is_mix(fill):
+        return isinstance(fill, tuple) and fill[:1] == ('mix',)
+
+    def chip(self, label, fill, ink, font_size, border_color=None):
+        """A small label in a type's colours"""
         border = max(2, round(font_size / 7))
-        return Box(
-            style=Style(width='fit', height='fit', background=fill, border=(border, ink if fill == WHITE else fill),
-                        padding=(round(font_size * 0.3), round(font_size * 0.6))),
-            children=[Text(label, style=Style(font_size=font_size, font_color=ink, font_path=self.font_bold))],
-        )
+        if border_color is None:
+            border_color = ink if fill == WHITE else fill
+        style = Style(width='fit', height='fit', border=(border, border_color),
+                      padding=(round(font_size * 0.3), round(font_size * 0.6)))
+        text = Text(label, style=Style(font_size=font_size, font_color=ink, font_path=self.font_bold))
+        return self.filled_box(style, [text], fill, ink, border_color)
+
+    def filled_box(self, style, children, fill, ink, border_color):
+        """A Box with the given style and a solid or mix() fill. A solid fill is drawn by picolay
+        directly; a mix() fill is rendered on its own and patterned, then placed as a finished image."""
+        if not self.is_mix(fill):
+            return Box(style=dataclasses.replace(style, background=fill), children=children)
+        box = Box(style=dataclasses.replace(style, background=CHIP_FILL_MARK), children=children)
+        layout = compute_layout(box, 2000, 1000, antialias=False)
+        w, h = round(layout.width), round(layout.height)
+        pixels = np.array(picolay_render(box, w, h, antialias=False).convert('RGB'))
+        _, a, b, share_b = fill
+        ys, xs = np.mgrid[0:h, 0:w]
+        use_b = BAYER4[ys % 4, xs % 4] < round(share_b * 16)
+        pattern = np.where(use_b[..., None], np.array(b, np.uint8), np.array(a, np.uint8))
+        marked = np.all(pixels == CHIP_FILL_MARK, axis=-1)
+        pixels[marked] = pattern[marked]
+        # A one-pixel halo of the mix's ink that contrasts most with the text keeps letters
+        # from running into the pattern's dots
+        text = np.all(pixels == ink, axis=-1)
+        if ink != border_color:
+            text &= ~np.all(pixels == border_color, axis=-1)
+        near = text.copy()
+        near[1:] |= text[:-1]; near[:-1] |= text[1:]
+        near[:, 1:] |= text[:, :-1]; near[:, :-1] |= text[:, 1:]
+        luma = lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+        halo = max((a, b), key=lambda c: abs(luma(c) - luma(ink)))
+        pixels[near & marked & ~text] = halo
+        return Img(Image.fromarray(pixels), style=Style(width=w, height=h, object_fit='none'))
 
     @staticmethod
     def rows_overflow(layout):
@@ -881,10 +949,9 @@ class PokemonEInkCalendar:
         types = pokemon.get('types') or []
 
         # The day's accent is the colour of the Pokemon's first type
-        accent, on_accent = self.type_colors(types[0]) if types else (BLACK, WHITE)
-        if accent == WHITE:
-            accent, on_accent = on_accent, WHITE
+        accent = self.type_accent(types[0]) if types else BLACK
         accent_ink = BLACK if accent == YELLOW else accent  # yellow is unreadable as text
+        leaf_fill, leaf_ink, leaf_border = self.type_colors(types[0]) if types else (BLACK, WHITE, BLACK)
 
         # Sprite
         sprite_path = pokemon.get('local_sprite')
@@ -899,8 +966,12 @@ class PokemonEInkCalendar:
             now = self.display_date()
             leaf = u(58)
             date_children = [
-                Box(style=Style(width=leaf, height=leaf, background=accent, justify_content='center', align_items='center'),
-                    children=[Text(str(now.day), style=Style(font_size=u(34), font_color=on_accent, font_path=bold))]),
+                # The date leaf wears the first type's chip colours
+                self.filled_box(
+                    Style(width=leaf, height=leaf, border=(max(2, u(4)), leaf_border),
+                          justify_content='center', align_items='center'),
+                    [Text(str(now.day), style=Style(font_size=u(34), font_color=leaf_ink, font_path=bold))],
+                    leaf_fill, leaf_ink, leaf_border),
                 Box(style=Style(flex_grow=1, height='fit', flex_direction='column', gap=u(9)),
                     children=[
                         Text(now.strftime("%A"), style=Style(font_size=u(27), font_path=bold, font_shrink=True,
@@ -931,7 +1002,7 @@ class PokemonEInkCalendar:
             if types:
                 entry_children.append(Box(
                     style=Style(height='fit', gap=u(8), margin=(u(12), 0, 0, 0)),
-                    children=[self.chip(t.upper(), *self.type_colors(t), u(13)) for t in types],
+                    children=[self.chip(t.upper(), *self.type_colors(t)[:2], u(13), self.type_colors(t)[2]) for t in types],
                 ))
             entry = Box(style=Style(height='fit', flex_direction='column'), children=entry_children)
 
